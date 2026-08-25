@@ -1,8 +1,8 @@
 """
 Visual scanner: coarse stride → frame-diff filter → OCR → fuzzy match.
-Once a match is found at time T, does a fine scan backwards from T to find
-the actual first frame. The fine scan bypasses pre-filters — it already knows
-text is nearby and must not miss the true onset frame.
+OCR mode is optional (--use-ocr flag). Default mode extracts the frame at the
+audio-prior timestamp without any OCR. OCR mode adds visual text verification
+but requires clean on-screen text (beta; struggles with stylised/period fonts).
 """
 
 from dataclasses import dataclass
@@ -13,11 +13,12 @@ import numpy as np
 from rapidfuzz import fuzz
 
 FUZZY_THRESHOLD = 70
-DIFF_THRESHOLD = 4.0       # mean-abs pixel diff below this → frame unchanged, skip OCR
-COARSE_STRIDE_S = 2.0      # background scan interval — subtitles show ≥2s, nothing missed
-PRIORITY_STRIDE_S = 0.5    # priority-window scan interval (seconds)
-FINE_STRIDE_S = 0.1        # fine scan interval once we have a rough match
-TEXT_EDGE_THRESHOLD = 0.04  # min fraction of Canny edge pixels to allow OCR
+DIFF_THRESHOLD = 4.0
+COARSE_STRIDE_S = 2.0
+PRIORITY_STRIDE_S = 0.5
+FINE_STRIDE_S = 0.1
+TEXT_EDGE_THRESHOLD = 0.04
+_OCR_CONF_THRESHOLD = 0.2
 
 
 @dataclass
@@ -28,8 +29,30 @@ class ScanResult:
     ocr_text: str | None = None
     match_score: float | None = None
     frame_image: np.ndarray | None = None
-    coverage: float = 1.0               # fraction of video actually scanned
+    coverage: float = 1.0
 
+
+def extract_frame_at(video_path: Path, t: float) -> ScanResult:
+    """Return the frame at time t without any OCR. Used in audio-only mode."""
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    frame_no = int(t * fps)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, float(frame_no))
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        return ScanResult(status="NOT_FOUND")
+    return ScanResult(
+        status="FOUND",
+        timestamp=t,
+        frame_number=frame_no,
+        frame_image=frame,
+    )
+
+
+# ---------------------------------------------------------------------------
+# OCR helpers (only used when --use-ocr is active)
+# ---------------------------------------------------------------------------
 
 def _crop(frame: np.ndarray, roi: tuple[int, int, int, int] | None) -> np.ndarray:
     if roi is None:
@@ -39,7 +62,6 @@ def _crop(frame: np.ndarray, roi: tuple[int, int, int, int] | None) -> np.ndarra
 
 
 def _subtitle_strip(frame: np.ndarray, roi: tuple | None) -> np.ndarray:
-    """ROI if learned, else bottom 30% of frame (matches learn_roi band boundaries)."""
     if roi is not None:
         return _crop(frame, roi)
     h = frame.shape[0]
@@ -47,7 +69,6 @@ def _subtitle_strip(frame: np.ndarray, roi: tuple | None) -> np.ndarray:
 
 
 def _strip_changed(prev: np.ndarray | None, curr: np.ndarray, roi: tuple | None) -> bool:
-    """Diff only the subtitle strip — ignores scene motion, sensitive to subtitle changes."""
     if prev is None:
         return True
     a = _subtitle_strip(prev, roi).astype(np.float32)
@@ -56,45 +77,25 @@ def _strip_changed(prev: np.ndarray | None, curr: np.ndarray, roi: tuple | None)
 
 
 def _has_text_hint(frame: np.ndarray, roi: tuple | None) -> bool:
-    """
-    ~2ms OpenCV pre-check: does the subtitle region contain text-like edges?
-    Skips EasyOCR (1-3s) on blank or uniform regions.
-    """
     strip = _subtitle_strip(frame, roi)
     gray = cv2.cvtColor(strip, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150)
-    edge_frac = edges.sum() / (255 * edges.size)
-    return float(edge_frac) >= TEXT_EDGE_THRESHOLD
+    return float(edges.sum() / (255 * edges.size)) >= TEXT_EDGE_THRESHOLD
 
 
-_OCR_CONF_THRESHOLD = 0.2  # discard low-confidence EasyOCR detections (noise/fragments)
-
-
-def _ocr(reader, frame: np.ndarray, roi: tuple | None, debug_t: float | None = None) -> str:
+def _ocr(reader, frame: np.ndarray, roi: tuple | None) -> str:
     if roi is not None:
         results = reader.readtext(_crop(frame, roi), detail=1)
     else:
         h = frame.shape[0]
         combined = np.vstack([frame[:int(h * 0.30)], frame[int(h * 0.70):]])
         results = reader.readtext(combined, detail=1)
-    if debug_t is not None and results:
-        for (_, text, conf) in results:
-            print(f"  [raw t={debug_t:.2f}] conf={conf:.2f} {text!r}")
     return " ".join(text for (_, text, conf) in results if conf >= _OCR_CONF_THRESHOLD)
 
 
 def _check_frame(
-    cap: cv2.VideoCapture,
-    reader,
-    target: str,
-    roi: tuple | None,
-    fps: float,
-    t: float,
-    prev_frame: np.ndarray | None,
-    stats: dict,
-    skip_prefilter: bool = False,
-) -> tuple[ScanResult | None, np.ndarray | None]:
-    """Seek to t, run pre-checks (unless skip_prefilter), then OCR."""
+    cap, reader, target, roi, fps, t, prev_frame, stats, skip_prefilter=False,
+):
     frame_no = int(t * fps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, float(frame_no))
     ok, frame = cap.read()
@@ -110,11 +111,7 @@ def _check_frame(
             return None, frame
 
     stats["ocr_calls"] += 1
-    text = _ocr(reader, frame, roi, debug_t=t if skip_prefilter else None)
-    if text.strip():
-        score_preview = fuzz.WRatio(target.lower(), text.lower())
-        print(f"[ocr t={t:.2f}] score={score_preview} {text!r}")
-    # Length guard: a single char like 'Y' scores 100 via partial alignment — skip noise.
+    text = _ocr(reader, frame, roi)
     if len(text.strip()) < max(3, len(target) // 3):
         return None, frame
     score = fuzz.WRatio(target.lower(), text.lower())
@@ -130,29 +127,16 @@ def _check_frame(
     return None, frame
 
 
-def _scan_range(
-    cap: cv2.VideoCapture,
-    reader,
-    target: str,
-    roi: tuple | None,
-    fps: float,
-    t_start: float,
-    t_end: float,
-    stride: float,
-    stats: dict,
-    stop_before: float | None = None,
-    skip_prefilter: bool = False,
-) -> ScanResult | None:
-    """Scan [t_start, t_end] at stride. Returns earliest match or None."""
-    best: ScanResult | None = None
-    prev_frame: np.ndarray | None = None
+def _scan_range(cap, reader, target, roi, fps, t_start, t_end, stride, stats,
+                stop_before=None, skip_prefilter=False):
+    best = None
+    prev_frame = None
     t = t_start
     while t <= t_end:
         if stop_before is not None and t >= stop_before:
             break
         match, prev_frame = _check_frame(
-            cap, reader, target, roi, fps, t, prev_frame, stats, skip_prefilter
-        )
+            cap, reader, target, roi, fps, t, prev_frame, stats, skip_prefilter)
         if match:
             best = match
             stop_before = match.timestamp
@@ -160,29 +144,12 @@ def _scan_range(
     return best
 
 
-def _fine_scan(
-    cap: cv2.VideoCapture,
-    reader,
-    target: str,
-    roi: tuple | None,
-    fps: float,
-    rough_t: float,
-    stats: dict,
-) -> ScanResult:
-    """
-    Scan the window before rough_t at FINE_STRIDE_S to find the actual first frame.
-    Pre-filters are DISABLED — we know text is nearby and cannot afford to miss onset.
-    Lookback is stride-aware: covers at least one full coarse stride plus 1s margin.
-    """
-    lookback_s = max(COARSE_STRIDE_S, PRIORITY_STRIDE_S) + 1.0
-    lookback = max(0.0, rough_t - lookback_s)
-    result = _scan_range(
-        cap, reader, target, roi, fps, lookback, rough_t, FINE_STRIDE_S,
-        stats, stop_before=rough_t, skip_prefilter=True,
-    )
+def _fine_scan(cap, reader, target, roi, fps, rough_t, stats):
+    lookback = max(0.0, rough_t - (max(COARSE_STRIDE_S, PRIORITY_STRIDE_S) + 1.0))
+    result = _scan_range(cap, reader, target, roi, fps, lookback, rough_t,
+                         FINE_STRIDE_S, stats, stop_before=rough_t, skip_prefilter=True)
     if result is not None and result.timestamp is not None and result.timestamp < rough_t:
         return result
-    # rough_t confirmed as earliest; re-fetch it (no filter needed here either)
     cap.set(cv2.CAP_PROP_POS_FRAMES, float(int(rough_t * fps)))
     _, frame = cap.read()
     stats["ocr_calls"] += 1
@@ -205,23 +172,15 @@ def find_first(
     reader,
     audio_had_hit: bool = False,
 ) -> ScanResult:
-    """
-    Full visual scan per CLAUDE.md:
-    1. Priority windows first (subtitle/audio hints), PRIORITY_STRIDE_S.
-    2. Background: rest of video at COARSE_STRIDE_S.
-    3. Fine scan (no pre-filters) around rough match to find exact first frame.
-    Visual scan always covers the whole video.
-    """
+    """Full OCR-based visual scan. Only called when --use-ocr is active."""
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total / fps
+    duration = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) / fps
 
     stats: dict = {"diff_skipped": 0, "hint_skipped": 0, "ocr_calls": 0}
-    rough_match: ScanResult | None = None
-    stop_before: float | None = None
+    rough_match = None
+    stop_before = None
 
-    # --- 1. Priority windows (pre-filters off — hint already confirmed text is here) ---
     covered: list[tuple[float, float]] = []
     for ws, we in sorted(priority_windows):
         t_end = min(we + 2.0, stop_before or duration)
@@ -233,7 +192,6 @@ def find_first(
                 rough_match = m
                 stop_before = m.timestamp
 
-    # --- 2. Background scan (uncovered segments) ---
     covered.sort()
     cursor = 0.0
     uncovered: list[tuple[float, float]] = []
@@ -256,14 +214,12 @@ def find_first(
     print(f"[scan] stats — ocr_calls: {stats['ocr_calls']}, "
           f"diff_skipped: {stats['diff_skipped']}, hint_skipped: {stats['hint_skipped']}")
 
-    # --- 3. Fine scan (pre-filters off) to find exact first frame ---
     if rough_match is not None and rough_match.timestamp is not None:
         result = _fine_scan(cap, reader, target, roi, fps, rough_match.timestamp, stats)
         cap.release()
         return result
 
     cap.release()
-
     if audio_had_hit:
         return ScanResult(status="SPOKEN_NOT_SHOWN", coverage=1.0)
     return ScanResult(status="NOT_FOUND", coverage=1.0)

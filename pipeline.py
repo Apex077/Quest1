@@ -1,6 +1,9 @@
 """
 Main pipeline orchestrator.
-Usage: python pipeline.py <url> <target_phrase> [out_dir]
+Usage: python pipeline.py <url> <target_phrase> [out_dir] [--use-ocr]
+
+Default: audio/subtitle priors → extract frame at matched timestamp (no OCR).
+--use-ocr: enable full OCR-based visual scan (beta; may struggle with stylised fonts).
 """
 
 import sys
@@ -8,14 +11,12 @@ import warnings
 from pathlib import Path
 
 import cv2
-import easyocr
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 
 from ingest import VideoInfo, ingest
 from prior import audio_prior, subtitle_prior
-from roi import learn_roi
-from scan import ScanResult, find_first
+from scan import ScanResult, extract_frame_at, find_first
 
 
 def _save_frame(frame, out_dir: Path, timestamp: float) -> Path:
@@ -24,20 +25,30 @@ def _save_frame(frame, out_dir: Path, timestamp: float) -> Path:
     return path
 
 
-def run(info: VideoInfo, target: str, out_dir: Path) -> ScanResult:
-    # Single reader instance shared by ROI learning and visual scan.
-    # GPU is 10-50× faster than CPU; auto-detect so this works on any machine.
-    import torch
-    gpu = torch.cuda.is_available()
-    print(f"[pipeline] Loading OCR model (gpu={gpu})...")
-    reader = easyocr.Reader(["en"], gpu=gpu, verbose=False)
+def _report(result: ScanResult, out_dir: Path) -> None:
+    if result.status == "FOUND":
+        assert result.frame_image is not None
+        img_path = _save_frame(result.frame_image, out_dir, result.timestamp)
+        print("FOUND")
+        print(f"  timestamp   : {result.timestamp:.3f}s")
+        print(f"  frame       : {result.frame_number}")
+        if result.ocr_text is not None:
+            print(f"  ocr_text    : {result.ocr_text!r}")
+            print(f"  match_score : {result.match_score:.1f}")
+        print(f"  frame_image : {img_path}")
+    elif result.status == "SPOKEN_NOT_SHOWN":
+        print("SPOKEN_NOT_SHOWN — audio contains the phrase but it never appeared on screen")
+    else:
+        print(f"NOT_FOUND — scanned {result.coverage * 100:.0f}% of video, no visual match")
 
-    # --- Subtitle prior (cheapest) — always run; ffprobe works on local file ---
+
+def run(info: VideoInfo, target: str, out_dir: Path, use_ocr: bool = False) -> ScanResult:
+    # --- Subtitle prior (cheapest; ffprobe on local file, always available) ---
     print("[pipeline] Checking embedded subtitle tracks...")
     sub_windows = subtitle_prior(info.video_path, target)
     print(f"[pipeline] Subtitle windows matched: {sub_windows or 'none'}")
 
-    # --- Audio prior (only if no subtitle hit) ---
+    # --- Audio prior (if no subtitle hit) ---
     audio_windows: list[tuple[float, float]] = []
     audio_had_hit = False
     if not sub_windows and info.audio_path:
@@ -48,41 +59,48 @@ def run(info: VideoInfo, target: str, out_dir: Path) -> ScanResult:
 
     priority = sub_windows or audio_windows
 
-    # --- Learn text region ---
+    # --- Audio-only mode (default): trust the prior, extract the frame ---
+    if not use_ocr:
+        if priority:
+            t = priority[0][0]  # earliest matched window start
+            print(f"[pipeline] Audio-only mode: extracting frame at {t:.3f}s")
+            result = extract_frame_at(info.video_path, t)
+        else:
+            result = ScanResult(status="NOT_FOUND")
+        _report(result, out_dir)
+        return result
+
+    # --- OCR mode (beta): full visual scan with text recognition ---
+    print("[pipeline] OCR mode enabled (beta)")
+    import easyocr
+    import torch
+    from roi import learn_roi
+
+    gpu = torch.cuda.is_available()
+    print(f"[pipeline] Loading OCR model (gpu={gpu})...")
+    reader = easyocr.Reader(["en"], gpu=gpu, verbose=False)
+
     print("[pipeline] Sampling frames to learn text region...")
     roi = learn_roi(info.video_path, reader)
     print(f"[pipeline] ROI: {roi or 'none (full-frame scan)'}")
 
-    # --- Visual scan (always covers the whole video) ---
     print("[pipeline] Starting visual scan...")
     result = find_first(info.video_path, target, roi, priority, reader, audio_had_hit)
-
-    # --- Report ---
-    if result.status == "FOUND":
-        assert result.frame_image is not None
-        img_path = _save_frame(result.frame_image, out_dir, result.timestamp)
-        print(f"FOUND")
-        print(f"  timestamp   : {result.timestamp:.3f}s")
-        print(f"  frame       : {result.frame_number}")
-        print(f"  ocr_text    : {result.ocr_text!r}")
-        print(f"  match_score : {result.match_score:.1f}")
-        print(f"  frame_image : {img_path}")
-    elif result.status == "SPOKEN_NOT_SHOWN":
-        print("SPOKEN_NOT_SHOWN — audio contains the phrase but it never appeared on screen")
-    else:
-        print(f"NOT_FOUND — scanned {result.coverage * 100:.0f}% of video, no visual match")
-
+    _report(result, out_dir)
     return result
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("usage: python pipeline.py <url> <target_phrase> [out_dir]")
+    args = sys.argv[1:]
+    if len(args) < 2:
+        print("usage: python pipeline.py <url> <target_phrase> [out_dir] [--use-ocr]")
         sys.exit(1)
 
-    url = sys.argv[1]
-    target = sys.argv[2]
-    out_dir = Path(sys.argv[3]) if len(sys.argv) > 3 else Path("downloads")
+    url = args[0]
+    target = args[1]
+    use_ocr = "--use-ocr" in args
+    remaining = [a for a in args[2:] if a != "--use-ocr"]
+    out_dir = Path(remaining[0]) if remaining else Path("downloads")
 
     info = ingest(url, out_dir)
-    run(info, target, out_dir)
+    run(info, target, out_dir, use_ocr=use_ocr)

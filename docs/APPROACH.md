@@ -68,3 +68,5 @@ Apart from facing a couple of SSL issues (broken headers which I fixed by updati
 
 # Phase 2: Pipeline Setup
 There are 2 main priors as mentioned in the architecture diagram, which get dynamically reordered based on which one is available. In addition, ```roi.py``` looks for where embedded subtitles could be located if present directly in the video file, and returns an area box of where it could be located. The ```prior.py``` file checks both audio and video priors. The ```pipeline.py``` consolidates all the functionality of the above files together to get the final result.
+
+Ended up doing a lot of fine-tuning and optimization, and got to a point where audio is pretty accurate for the most part, but the video OCR part seems to be acting up. I'm not sure if the model is acting up, or pre-processing is messing up it's accuracy. For now, I'll probably just add an optional feature flag for it for now, and I'll probably come back to it later.
