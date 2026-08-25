@@ -92,20 +92,43 @@ def subtitle_prior(video_path: Path, target: str) -> list[tuple[float, float]]:
 # Audio prior
 # ---------------------------------------------------------------------------
 
+def _transcript_cache(audio_path: Path) -> Path:
+    return audio_path.with_suffix(".transcript.json")
+
+
+def _load_transcript(audio_path: Path) -> list[dict] | None:
+    cache = _transcript_cache(audio_path)
+    if cache.exists():
+        return json.loads(cache.read_text())
+    return None
+
+
+def _save_transcript(audio_path: Path, segments: list[dict]) -> None:
+    _transcript_cache(audio_path).write_text(json.dumps(segments))
+
+
 def audio_prior(audio_path: Path, target: str) -> list[tuple[float, float]]:
     """
     Transcribe audio with faster-whisper (base model, CPU, int8),
     return segment windows whose text fuzzy-matches the target.
+    Transcript is cached as audio.transcript.json — subsequent calls skip transcription.
     """
-    from faster_whisper import WhisperModel  # lazy import — heavy load
-
-    # ponytail: base model + int8 for speed; swap to "small"/"medium" if accuracy matters
-    model = WhisperModel("base", device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(str(audio_path), word_timestamps=False)
+    cached = _load_transcript(audio_path)
+    if cached is not None:
+        print("[prior] Using cached transcript")
+        segs = cached
+    else:
+        from faster_whisper import WhisperModel  # lazy import — heavy load
+        # ponytail: base model + int8 for speed; swap to "small"/"medium" if accuracy matters
+        model = WhisperModel("base", device="cpu", compute_type="int8")
+        raw, _ = model.transcribe(str(audio_path), word_timestamps=False)
+        segs = [{"start": s.start, "end": s.end, "text": s.text} for s in raw]
+        _save_transcript(audio_path, segs)
+        print(f"[prior] Transcript cached ({len(segs)} segments)")
 
     windows: list[tuple[float, float]] = []
-    for seg in segments:
-        if fuzz.partial_ratio(target.lower(), seg.text.lower()) >= FUZZY_THRESHOLD:
-            windows.append((seg.start, seg.end))
+    for seg in segs:
+        if fuzz.partial_ratio(target.lower(), seg["text"].lower()) >= FUZZY_THRESHOLD:
+            windows.append((seg["start"], seg["end"]))
 
     return sorted(windows)

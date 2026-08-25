@@ -4,10 +4,13 @@ Usage: python pipeline.py <url> <target_phrase> [out_dir]
 """
 
 import sys
+import warnings
 from pathlib import Path
 
 import cv2
 import easyocr
+
+warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 
 from ingest import VideoInfo, ingest
 from prior import audio_prior, subtitle_prior
@@ -29,12 +32,10 @@ def run(info: VideoInfo, target: str, out_dir: Path) -> ScanResult:
     print(f"[pipeline] Loading OCR model (gpu={gpu})...")
     reader = easyocr.Reader(["en"], gpu=gpu, verbose=False)
 
-    # --- Subtitle prior (cheapest) ---
-    sub_windows: list[tuple[float, float]] = []
-    if info.subtitle_langs:
-        print(f"[pipeline] Subtitle tracks available: {info.subtitle_langs}")
-        sub_windows = subtitle_prior(info.video_path, target)
-        print(f"[pipeline] Subtitle windows matched: {sub_windows or 'none'}")
+    # --- Subtitle prior (cheapest) — always run; ffprobe works on local file ---
+    print("[pipeline] Checking embedded subtitle tracks...")
+    sub_windows = subtitle_prior(info.video_path, target)
+    print(f"[pipeline] Subtitle windows matched: {sub_windows or 'none'}")
 
     # --- Audio prior (only if no subtitle hit) ---
     audio_windows: list[tuple[float, float]] = []
