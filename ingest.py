@@ -1,23 +1,12 @@
 """Phase 1: download video, probe metadata, extract audio stream."""
 
 import json
-import ssl
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import urllib3.util.ssl_
 import yt_dlp
-
-# ok.ru closes TLS without close_notify; OP_IGNORE_UNEXPECTED_EOF suppresses the SSLError.
-# Must patch urllib3's context builder — yt-dlp's requests backend uses it, not ssl.create_default_context.
-_FLAG = getattr(ssl, "OP_IGNORE_UNEXPECTED_EOF", 0)
-_orig_urllib3_ctx = urllib3.util.ssl_.create_urllib3_context
-def _patched_urllib3_ctx(*a, **kw):
-    ctx = _orig_urllib3_ctx(*a, **kw)
-    ctx.options |= _FLAG
-    return ctx
-urllib3.util.ssl_.create_urllib3_context = _patched_urllib3_ctx
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 
 @dataclass
@@ -31,23 +20,46 @@ class VideoInfo:
     subtitle_langs: list[str] = field(default_factory=list)
 
 
-def download(url: str, out_dir: Path) -> Path:
+_YDL_OPTS = {
+    "nocheckcertificate": True,
+    "impersonate": ImpersonateTarget(client="chrome"),
+}
+
+
+def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[str]]:
+    """Download video and return (video_path, subtitle_langs) in one yt-dlp session.
+    If a video file already exists in out_dir, skip the network call entirely."""
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    url_record = out_dir / "video.url"
+    existing = [p for p in out_dir.glob("video.*") if p.suffix not in (".part", ".url")]
+    if existing and url_record.exists() and url_record.read_text().strip() == url:
+        video_path = max(existing, key=lambda p: p.stat().st_size)
+        print(f"[ingest] Using cached video: {video_path}")
+        return video_path, []
+    elif existing:
+        print("[ingest] URL changed — removing old video and re-downloading")
+        for p in existing:
+            p.unlink()
+
     opts = {
+        **_YDL_OPTS,
         "outtmpl": str(out_dir / "video.%(ext)s"),
         "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
     }
     with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
-        errors = ydl.download([url])
-    if errors:
-        raise RuntimeError(f"yt-dlp reported {errors} error(s) downloading {url}")
+        info = ydl.extract_info(url, download=True) or {}
 
-    # yt-dlp writes the actual extension; find what landed
-    candidates = list(out_dir.glob("video.*"))
+    subs = {**info.get("subtitles", {}), **info.get("automatic_captions", {})}
+    subtitle_langs = list(subs.keys())
+
+    candidates = [p for p in out_dir.glob("video.*") if p.suffix not in (".part", ".url")]
     if not candidates:
         raise FileNotFoundError(f"yt-dlp produced no output in {out_dir}")
-    return max(candidates, key=lambda p: p.stat().st_size)
+    video_path = max(candidates, key=lambda p: p.stat().st_size)
+    url_record.write_text(url)
+    return video_path, subtitle_langs
 
 
 def _probe(video_path: Path) -> dict:
@@ -56,14 +68,6 @@ def _probe(video_path: Path) -> dict:
         "-show_streams", "-show_format", str(video_path),
     ]
     return json.loads(subprocess.check_output(cmd))
-
-
-def _list_subtitle_langs(url: str) -> list[str]:
-    opts = {"skip_download": True}
-    with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
-        info = ydl.extract_info(url, download=False)
-    subs = {**info.get("subtitles", {}), **info.get("automatic_captions", {})}
-    return list(subs.keys())
 
 
 def _extract_audio(video_path: Path, out_dir: Path) -> Path | None:
@@ -84,7 +88,7 @@ def _extract_audio(video_path: Path, out_dir: Path) -> Path | None:
 
 
 def ingest(url: str, out_dir: Path) -> VideoInfo:
-    video_path = download(url, out_dir)
+    video_path, subtitle_langs = _download_and_meta(url, out_dir)
     probe = _probe(video_path)
 
     video_stream = next(s for s in probe["streams"] if s["codec_type"] == "video")
@@ -94,7 +98,6 @@ def ingest(url: str, out_dir: Path) -> VideoInfo:
     width = int(video_stream["width"])
     height = int(video_stream["height"])
 
-    subtitle_langs = _list_subtitle_langs(url)
     audio_path = _extract_audio(video_path, out_dir)
 
     return VideoInfo(

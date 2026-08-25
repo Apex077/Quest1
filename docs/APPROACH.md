@@ -61,4 +61,10 @@ graph TD
     class L brown
 ```
 
+# Phase 1: Ingestion pipeline
+Initially, I just went with using ```yt-dlp``` for getting the video files and I used ```ffmpeg``` to separate audio stream and the video stream. In addition, I used ```ffprobe``` in order to get associated subtitle files if any. These are generally times-synced and very accurate for the most part.
 
+Apart from facing a couple of SSL issues (broken headers which I fixed by updating ```yt-dlp```), for the most part everything was functioning as intended. I saved the separate streams in the ```/downloads``` directory, for further processing.
+
+# Phase 2: Pipeline Setup
+There are 2 main priors as mentioned in the architecture diagram, which get dynamically reordered based on which one is available. In addition, ```roi.py``` looks for where embedded subtitles could be located if present directly in the video file, and returns an area box of where it could be located. The ```prior.py``` file checks both audio and video priors. The ```pipeline.py``` consolidates all the functionality of the above files together to get the final result.

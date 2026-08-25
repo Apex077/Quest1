@@ -1,1 +1,6 @@
 yt-dlp
+curl-cffi
+easyocr
+opencv-python
+faster-whisper
+rapidfuzz
