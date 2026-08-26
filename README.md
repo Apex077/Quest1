@@ -62,6 +62,9 @@ python3 -m venv venv
 source venv/bin/activate
 
 pip install -r requirements.txt
+
+# Pre-download the Whisper model (one-time, ~244 MB)
+python3 -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu')"
 ```
 
 **Windows (PowerShell):**
@@ -73,6 +76,9 @@ python -m venv venv
 venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
+
+# Pre-download the Whisper model (one-time, ~244 MB)
+python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu')"
 ```
 
 > If you get a `cannot be loaded because running scripts is disabled` error, run:
