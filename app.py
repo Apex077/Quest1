@@ -7,6 +7,7 @@ import ipaddress
 import json
 import queue
 import subprocess
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -19,7 +20,13 @@ app = Flask(__name__)
 BASE_DIR = Path(__file__).parent
 DOWNLOADS = (BASE_DIR / "downloads").resolve()
 
-# task_id → {"queue": Queue, "result": dict | None, "done": bool}
+# Resolve the venv Python interpreter cross-platform
+_VENV_PYTHON = (
+    BASE_DIR / "venv" / ("Scripts" if sys.platform == "win32" else "bin") /
+    ("python.exe" if sys.platform == "win32" else "python3")
+)
+
+# task_id → {"queue": Queue, "result": dict | None, "done": bool, "proc": Popen | None, "cancelled": bool}
 _tasks: dict[str, dict] = {}
 
 
@@ -65,7 +72,7 @@ def _run_pipeline(
 ) -> None:
     q: queue.Queue = _tasks[task_id]["queue"]
     cmd = [
-        str(BASE_DIR / "venv" / "bin" / "python3"),
+        str(_VENV_PYTHON),
         str(BASE_DIR / "pipeline.py"),
         url, phrase,
     ]
@@ -88,6 +95,7 @@ def _run_pipeline(
             bufsize=1,
             cwd=str(BASE_DIR),
         )
+        _tasks[task_id]["proc"] = proc
         for raw_line in (proc.stdout or []):
             line = raw_line.rstrip()
             q.put(line)
@@ -111,6 +119,8 @@ def _run_pipeline(
             elif "frame_image :" in line:
                 result["frame"] = line.split(":", 1)[1].strip()
         proc.wait()
+        if _tasks[task_id].get("cancelled"):
+            result["status"] = "CANCELLED"
     except Exception as exc:
         q.put(f"[error] {exc}")
         result["status"] = "ERROR"
@@ -151,7 +161,7 @@ def run():
         whisper_model = "small"
 
     task_id = str(uuid.uuid4())
-    _tasks[task_id] = {"queue": queue.Queue(), "result": None, "done": False}
+    _tasks[task_id] = {"queue": queue.Queue(), "result": None, "done": False, "proc": None, "cancelled": False}
     threading.Thread(
         target=_run_pipeline,
         args=(task_id, url, phrase, use_ocr, force_retranscribe, whisper_model, keep_video),
@@ -186,6 +196,18 @@ def stream(task_id):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.route("/cancel/<task_id>", methods=["POST"])
+def cancel(task_id):
+    task = _tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    proc = task.get("proc")
+    if proc and proc.poll() is None:  # still running
+        task["cancelled"] = True
+        proc.terminate()
+    return jsonify({"ok": True})
 
 
 @app.route("/frame/<task_id>")

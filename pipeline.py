@@ -71,27 +71,33 @@ def run(
             print(f"[pipeline] VTT match in {vtt.name}: {vtt_windows[:3]}")
             break
     if not vtt_windows:
-        print("[pipeline] No VTT match (no captions downloaded or no phrase match)")
+        print(f"[debug] No VTT match ({len(info.vtt_paths)} caption file(s) checked)")
 
     # --- Embedded subtitle prior ---
     sub_windows: list[tuple[float, float]] = []
     if not vtt_windows:
-        print("[pipeline] Checking embedded subtitle tracks...")
+        print("[debug] Checking embedded subtitle tracks...")
         sub_windows = subtitle_prior(info.video_path, target)
-        print(f"[pipeline] Subtitle windows matched: {sub_windows or 'none'}")
+        if sub_windows:
+            print(f"[pipeline] Subtitle match: {sub_windows[:3]}")
+        else:
+            print("[debug] No embedded subtitle match")
 
     # --- Audio prior (if no subtitle/VTT hit) ---
     audio_windows: list[tuple[float, float]] = []
     audio_had_hit = False
     if not vtt_windows and not sub_windows and info.audio_path:
-        print(f"[pipeline] No subtitle match — transcribing audio (model={whisper_model})...")
+        print(f"[debug] Transcribing audio (model={whisper_model})...")
         audio_windows = audio_prior(
             info.audio_path, target,
             model_name=whisper_model,
             force_retranscribe=force_retranscribe,
         )
         audio_had_hit = bool(audio_windows)
-        print(f"[pipeline] Audio windows matched: {audio_windows or 'none'}")
+        if audio_windows:
+            print(f"[pipeline] Audio match: {audio_windows[:3]}")
+        else:
+            print("[debug] No audio match")
 
     priority = vtt_windows or sub_windows or audio_windows
 
@@ -115,12 +121,12 @@ def run(
     from roi import learn_roi
 
     gpu = torch.cuda.is_available()
-    print(f"[pipeline] Loading OCR model (gpu={gpu})...")
+    print(f"[debug] Loading OCR model (gpu={gpu})...")
     reader = easyocr.Reader(["en"], gpu=gpu, verbose=False)
 
-    print("[pipeline] Sampling frames to learn text region...")
+    print("[debug] Sampling frames to learn text region...")
     roi = learn_roi(info.video_path, reader)
-    print(f"[pipeline] ROI: {roi or 'none (full-frame scan)'}")
+    print(f"[debug] ROI learned: {roi or 'none (full-frame scan)'}")
 
     print("[pipeline] Starting visual scan...")
     result = find_first(info.video_path, target, roi, priority, reader, audio_had_hit)

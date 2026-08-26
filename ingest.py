@@ -5,6 +5,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import cv2
 import yt_dlp
 from yt_dlp.networking.impersonate import ImpersonateTarget
 
@@ -25,6 +26,23 @@ _YDL_OPTS = {
     "impersonate": ImpersonateTarget(client="chrome"),
 }
 
+# Prefer H.264 MP4 — AV1 is unsupported by most OpenCV builds (no hw accel).
+# Falls back to any format if H.264 isn't available for the source.
+_VIDEO_FORMAT = (
+    "bestvideo[ext=mp4][vcodec!*=av01]+bestaudio[ext=m4a]"
+    "/bestvideo[ext=mp4]+bestaudio"
+    "/bestvideo[vcodec!*=av01]+bestaudio"
+    "/bestvideo+bestaudio/best"
+)
+
+
+def _opencv_can_read(video_path: Path) -> bool:
+    """Quick check: can OpenCV actually decode frames from this file?"""
+    cap = cv2.VideoCapture(str(video_path))
+    ok, _ = cap.read()
+    cap.release()
+    return ok
+
 
 def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[Path]]:
     """Download video (+ VTT captions if available) and return (video_path, vtt_paths).
@@ -35,9 +53,15 @@ def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[Path]]:
     existing = [p for p in out_dir.glob("video.*") if p.suffix not in (".part", ".url", ".vtt")]
     if existing and url_record.exists() and url_record.read_text().strip() == url:
         video_path = max(existing, key=lambda p: p.stat().st_size)
-        print(f"[ingest] Using cached video: {video_path}")
-        vtt_paths = sorted(out_dir.glob("video.*.vtt"))
-        return video_path, vtt_paths
+        if _opencv_can_read(video_path):
+            print(f"[ingest] Using cached video: {video_path}")
+            vtt_paths = sorted(out_dir.glob("video.*.vtt"))
+            return video_path, vtt_paths
+        else:
+            print(f"[ingest] Cached video is not readable by OpenCV (likely AV1) — re-downloading")
+            for p in existing:
+                p.unlink()
+            url_record.unlink(missing_ok=True)
     elif existing:
         print("[ingest] URL changed — removing old video and re-downloading")
         for p in existing:
@@ -46,7 +70,7 @@ def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[Path]]:
     opts = {
         **_YDL_OPTS,
         "outtmpl": str(out_dir / "video.%(ext)s"),
-        "format": "bestvideo+bestaudio/best",
+        "format": _VIDEO_FORMAT,
         "merge_output_format": "mp4",
         "writeautomaticsub": True,
         "subtitleslangs": ["en", "en-US", "en-GB"],

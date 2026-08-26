@@ -35,30 +35,68 @@ sudo apt install ffmpeg
 sudo pacman -S ffmpeg
 ```
 
+```powershell
+# Windows (winget)
+winget install Gyan.FFmpeg
+
+# Windows (Chocolatey)
+choco install ffmpeg
+```
+
+After installing on Windows, open a new terminal and confirm ffmpeg is on your PATH:
+```powershell
+ffmpeg -version
+```
+If the command isn't found, add the ffmpeg `bin\` folder to your `PATH` manually (System Properties → Environment Variables → Path).
+
 ---
 
 ## Setup
 
+**macOS / Linux:**
 ```bash
 git clone <repo-url>
 cd Quest1-Video-Frame-Extractor
 
 python3 -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
+source venv/bin/activate
 
 pip install -r requirements.txt
 ```
+
+**Windows (PowerShell):**
+```powershell
+git clone <repo-url>
+cd Quest1-Video-Frame-Extractor
+
+python -m venv venv
+venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt
+```
+
+> If you get a `cannot be loaded because running scripts is disabled` error, run:
+> `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
+> then try activating again.
 
 ---
 
 ## Web UI
 
 ```bash
+# macOS / Linux
 source venv/bin/activate
+python app.py
+```
+```powershell
+# Windows
+venv\Scripts\Activate.ps1
 python app.py
 ```
 
 Open `http://localhost:5000` in your browser.
+
+> The web UI automatically detects the platform and uses the correct venv interpreter (`venv\Scripts\python.exe` on Windows, `venv/bin/python3` on macOS/Linux).
 
 **Options in the sidebar:**
 
@@ -76,8 +114,13 @@ Results stream live in the right panel. The extracted frame image is shown when 
 ## CLI
 
 ```bash
+# macOS / Linux
 source venv/bin/activate
-
+python pipeline.py <url> <phrase> [out_dir] [options]
+```
+```powershell
+# Windows
+venv\Scripts\Activate.ps1
 python pipeline.py <url> <phrase> [out_dir] [options]
 ```
 
@@ -147,6 +190,12 @@ On the next run with the **same URL**, the video and transcript are reused autom
 ## Running tests
 
 ```bash
+# macOS / Linux
 source venv/bin/activate
+python -m pytest tests/ -v
+```
+```powershell
+# Windows
+venv\Scripts\Activate.ps1
 python -m pytest tests/ -v
 ```

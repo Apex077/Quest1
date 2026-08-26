@@ -38,6 +38,9 @@
   --badge-missing-bg:    #f8f8f8;
   --badge-missing-border:#dddddd;
   --badge-missing-text:  #555555;
+  --badge-cancel-bg:     #fff5f5;
+  --badge-cancel-border: #f5b8b8;
+  --badge-cancel-text:   #a03030;
 }
 
 /* System dark — only when user hasn't manually set a preference */
@@ -66,6 +69,9 @@
     --badge-missing-bg:    #222222;
     --badge-missing-border:#3a3a3a;
     --badge-missing-text:  #888888;
+    --badge-cancel-bg:     #2a1515;
+    --badge-cancel-border: #6a3030;
+    --badge-cancel-text:   #d08080;
   }
 }
 
@@ -94,6 +100,9 @@
   --badge-missing-bg:    #222222;
   --badge-missing-border:#3a3a3a;
   --badge-missing-text:  #888888;
+  --badge-cancel-bg:     #2a1515;
+  --badge-cancel-border: #6a3030;
+  --badge-cancel-text:   #d08080;
 }
 
 /* ── Base ── */
@@ -249,11 +258,18 @@ select:focus { border-color: var(--muted); }
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
-  transition: opacity 0.1s;
+  transition: opacity 0.1s, background 0.15s, color 0.15s;
   margin-top: auto;
 }
 .run-btn:hover:not(:disabled) { opacity: 0.78; }
 .run-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.run-btn.cancel {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+  opacity: 1;
+}
+.run-btn.cancel:hover { opacity: 0.7; }
 
 /* ── Section label ── */
 .section-label {
@@ -347,9 +363,10 @@ select:focus { border-color: var(--muted); }
   border: 1px solid;
   margin-bottom: 16px;
 }
-.result-badge.found   { background: var(--badge-found-bg);   border-color: var(--badge-found-border);   color: var(--badge-found-text);   }
-.result-badge.spoken  { background: var(--badge-spoken-bg);  border-color: var(--badge-spoken-border);  color: var(--badge-spoken-text);  }
-.result-badge.missing { background: var(--badge-missing-bg); border-color: var(--badge-missing-border); color: var(--badge-missing-text); }
+.result-badge.found    { background: var(--badge-found-bg);   border-color: var(--badge-found-border);   color: var(--badge-found-text);   }
+.result-badge.spoken   { background: var(--badge-spoken-bg);  border-color: var(--badge-spoken-border);  color: var(--badge-spoken-text);  }
+.result-badge.missing  { background: var(--badge-missing-bg); border-color: var(--badge-missing-border); color: var(--badge-missing-text); }
+.result-badge.cancelled{ background: var(--badge-cancel-bg);  border-color: var(--badge-cancel-border);  color: var(--badge-cancel-text);  }
 
 .meta-grid {
   display: grid;
@@ -565,7 +582,7 @@ function onDragEnd() {
 const STAGE_ORDER = ['ingest', 'prior', 'roi', 'scan', 'done'];
 const STAGE_PATTERNS = [
   { key: 'ingest', re: /^\[ingest\]/ },
-  { key: 'prior',  re: /^\[(prior|pipeline)\].*?(subtitle|audio|transcript)/i },
+  { key: 'prior',  re: /^\[(prior|pipeline|debug)\].*?(subtitle|audio|transcript|vtt|caption)/i },
   { key: 'roi',    re: /^\[pipeline\].*?(sampling|region|roi)/i },
   { key: 'scan',   re: /^\[pipeline\].*?visual scan|\[scan\]/i },
   { key: 'done',   re: /^(FOUND|NOT_FOUND|SPOKEN_NOT_SHOWN)/ },
@@ -592,7 +609,7 @@ function advanceStage(line) {
 }
 
 // ── Log ──
-const VERBOSE_RE = /^\[(scan|ocr|raw|prior|roi)\b/;
+const VERBOSE_RE = /^\[(scan|ocr|raw|prior|roi|debug)\b/;
 const logEl      = document.getElementById('log');
 const verboseChk = document.getElementById('verbose');
 
@@ -668,6 +685,9 @@ function showResult(data, taskId) {
   } else if (data.status === 'SPOKEN_NOT_SHOWN') {
     badge.className = 'result-badge spoken';
     badge.textContent = 'Spoken, not shown — audio matched; no on-screen text found';
+  } else if (data.status === 'CANCELLED') {
+    badge.className = 'result-badge cancelled';
+    badge.textContent = 'Cancelled';
   } else {
     badge.className = 'result-badge missing';
     badge.textContent = data.status === 'ERROR'
@@ -676,12 +696,38 @@ function showResult(data, taskId) {
   }
 }
 
-// ── Form submit ──
+// ── Form submit / cancel ──
 const submitBtn  = document.getElementById('submit-btn');
 const logSection = document.getElementById('log-section');
 const stageStrip = document.getElementById('stage-strip');
 const resultSec  = document.getElementById('result-section');
 const emptyState = document.getElementById('empty-state');
+
+let _activeTaskId = null;
+
+function _resetBtn() {
+  submitBtn.disabled    = false;
+  submitBtn.textContent = 'Extract Frame';
+  submitBtn.classList.remove('cancel');
+  _activeTaskId = null;
+}
+
+function _runningBtn() {
+  submitBtn.disabled    = false;
+  submitBtn.textContent = 'Cancel Extraction';
+  submitBtn.classList.add('cancel');
+}
+
+submitBtn.addEventListener('click', async e => {
+  // Cancel path — button is in cancel mode
+  if (submitBtn.classList.contains('cancel') && _activeTaskId) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Cancelling…';
+    try { await fetch(`/cancel/${_activeTaskId}`, { method: 'POST' }); } catch {}
+    // SSE 'done' event will fire and reset the button
+    return;
+  }
+});
 
 document.getElementById('main-form').addEventListener('submit', async e => {
   e.preventDefault();
@@ -696,14 +742,13 @@ document.getElementById('main-form').addEventListener('submit', async e => {
 
   if (!clientValidate(url, phrase)) return;
 
-  submitBtn.disabled    = true;
-  submitBtn.textContent = 'Running…';
-  logEl.innerHTML       = '';
-  logSection.hidden     = false;
-  stageStrip.hidden     = false;
-  resultSec.hidden      = true;
-  emptyState.hidden     = true;
+  logEl.innerHTML   = '';
+  logSection.hidden = false;
+  stageStrip.hidden = false;
+  resultSec.hidden  = true;
+  emptyState.hidden = true;
   resetStages();
+  _runningBtn();
 
   let taskId;
   try {
@@ -716,13 +761,14 @@ document.getElementById('main-form').addEventListener('submit', async e => {
     if (!res.ok) {
       const field = (body.error || '').toLowerCase().includes('url') ? 'url' : 'phrase';
       showFieldError(field, body.error || 'Server error');
-      submitBtn.disabled = false; submitBtn.textContent = 'Extract Frame';
+      _resetBtn();
       return;
     }
     taskId = body.task_id;
+    _activeTaskId = taskId;
   } catch {
     showFieldError('url', 'Could not connect to the server');
-    submitBtn.disabled = false; submitBtn.textContent = 'Extract Frame';
+    _resetBtn();
     return;
   }
 
@@ -730,7 +776,7 @@ document.getElementById('main-form').addEventListener('submit', async e => {
   evtSrc.onmessage = ev => appendLog(ev.data);
   evtSrc.addEventListener('done', ev => {
     evtSrc.close();
-    submitBtn.disabled = false; submitBtn.textContent = 'Extract Frame';
+    _resetBtn();
     document.getElementById('retranscribe').checked = false;
     try { showResult(JSON.parse(ev.data), taskId); }
     catch { appendLog('[error] Could not parse result'); }
@@ -738,7 +784,7 @@ document.getElementById('main-form').addEventListener('submit', async e => {
   evtSrc.onerror = () => {
     evtSrc.close();
     appendLog('[error] Lost connection to server');
-    submitBtn.disabled = false; submitBtn.textContent = 'Extract Frame';
+    _resetBtn();
   };
 });
 </script>
