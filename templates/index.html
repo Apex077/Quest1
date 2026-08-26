@@ -4,17 +4,108 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Frame Extractor</title>
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+<!-- Blocking: apply saved theme before first paint to prevent flash -->
+<script>
+  const _t = localStorage.getItem('theme');
+  if (_t) document.documentElement.setAttribute('data-theme', _t);
+</script>
+
+<style>
+/* ── Palette tokens ── */
+:root {
+  --bg:            #ffffff;
+  --surface:       #f7f7f7;
+  --border:        #e5e5e5;
+  --text:          #1a1a1a;
+  --muted:         #999999;
+  --label:         #444444;
+  --desc:          #666666;
+  --input-border:  #d4d4d4;
+  --log-text:      #2a2a2a;
+  --btn-bg:        #1a1a1a;
+  --btn-text:      #ffffff;
+  --handle-active: #bbbbbb;
+  --stage-off:     #e0e0e0;
+  --error:         #c0292d;
+
+  --badge-found-bg:      #f4fbf4;
+  --badge-found-border:  #b3d4b3;
+  --badge-found-text:    #2a5a2a;
+  --badge-spoken-bg:     #fdf9f2;
+  --badge-spoken-border: #ddd0b0;
+  --badge-spoken-text:   #5a4820;
+  --badge-missing-bg:    #f8f8f8;
+  --badge-missing-border:#dddddd;
+  --badge-missing-text:  #555555;
+}
+
+/* System dark — only when user hasn't manually set a preference */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:            #141414;
+    --surface:       #1e1e1e;
+    --border:        #2e2e2e;
+    --text:          #e8e8e8;
+    --muted:         #666666;
+    --label:         #aaaaaa;
+    --desc:          #888888;
+    --input-border:  #3a3a3a;
+    --log-text:      #cccccc;
+    --btn-bg:        #e8e8e8;
+    --btn-text:      #141414;
+    --handle-active: #555555;
+    --stage-off:     #333333;
+
+    --badge-found-bg:      #1a2e1a;
+    --badge-found-border:  #3a5a3a;
+    --badge-found-text:    #8ab88a;
+    --badge-spoken-bg:     #2a2210;
+    --badge-spoken-border: #5a4a2a;
+    --badge-spoken-text:   #c8a860;
+    --badge-missing-bg:    #222222;
+    --badge-missing-border:#3a3a3a;
+    --badge-missing-text:  #888888;
+  }
+}
+
+/* Manual dark override — wins over everything */
+[data-theme="dark"] {
+  --bg:            #141414;
+  --surface:       #1e1e1e;
+  --border:        #2e2e2e;
+  --text:          #e8e8e8;
+  --muted:         #666666;
+  --label:         #aaaaaa;
+  --desc:          #888888;
+  --input-border:  #3a3a3a;
+  --log-text:      #cccccc;
+  --btn-bg:        #e8e8e8;
+  --btn-text:      #141414;
+  --handle-active: #555555;
+  --stage-off:     #333333;
+
+  --badge-found-bg:      #1a2e1a;
+  --badge-found-border:  #3a5a3a;
+  --badge-found-text:    #8ab88a;
+  --badge-spoken-bg:     #2a2210;
+  --badge-spoken-border: #5a4a2a;
+  --badge-spoken-text:   #c8a860;
+  --badge-missing-bg:    #222222;
+  --badge-missing-border:#3a3a3a;
+  --badge-missing-text:  #888888;
+}
+
+/* ── Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.6;
-  color: #1a1a1a;
-  background: #fff;
+  color: var(--text);
+  background: var(--bg);
 }
 
 /* ── Three-column grid: sidebar | handle | main ── */
@@ -28,34 +119,57 @@ body {
   padding: 36px 28px 48px;
   display: flex;
   flex-direction: column;
-  overflow: hidden;          /* content clips cleanly when sidebar narrows */
+  overflow: hidden;
 }
 
 /* ── Resize handle ── */
 .resize-handle {
   cursor: col-resize;
-  touch-action: none;        /* prevents scroll hijack on touch */
-  background: #e5e5e5;
+  touch-action: none;
+  background: var(--border);
   transition: background 0.15s;
   position: relative;
   z-index: 10;
 }
 .resize-handle:hover,
-.resize-handle.dragging { background: #bbb; }
+.resize-handle.dragging { background: var(--handle-active); }
 
 .main {
   padding: 36px 36px 48px;
   overflow-y: auto;
-  min-width: 0;              /* lets grid item shrink below content width */
+  min-width: 0;
 }
 
-/* ── Header ── */
-.app-title { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin-bottom: 4px; white-space: nowrap; }
-.app-desc  { font-size: 12.5px; color: #666; line-height: 1.5; margin-bottom: 28px; }
+/* ── Header row ── */
+.header-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.app-title { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; white-space: nowrap; }
+.app-desc  { font-size: 12.5px; color: var(--desc); line-height: 1.5; margin-bottom: 28px; }
+
+/* Theme toggle */
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+.theme-toggle:hover { color: var(--text); border-color: var(--text); }
 
 hr {
   border: none;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--border);
   margin: 20px 0;
 }
 
@@ -66,7 +180,7 @@ hr {
   display: block;
   font-size: 12px;
   font-weight: 600;
-  color: #444;
+  color: var(--label);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 5px;
@@ -76,20 +190,20 @@ input[type="text"],
 input[type="url"] {
   width: 100%;
   padding: 7px 10px;
-  border: 1px solid #d4d4d4;
+  border: 1px solid var(--input-border);
   border-radius: 4px;
   font-size: 13.5px;
   font-family: inherit;
-  color: #1a1a1a;
-  background: #fff;
+  color: var(--text);
+  background: var(--bg);
   outline: none;
   transition: border-color 0.1s;
 }
-input:focus { border-color: #888; }
-input.invalid { border-color: #c0292d; }
+input:focus { border-color: var(--muted); }
+input.invalid { border-color: var(--error); }
 
-.field-hint  { font-size: 11.5px; color: #999; margin-top: 3px; }
-.field-error { font-size: 11.5px; color: #c0292d; margin-top: 3px; display: none; }
+.field-hint  { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.field-error { font-size: 11.5px; color: var(--error); margin-top: 3px; display: none; }
 
 /* ── Checkbox options ── */
 .options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
@@ -102,16 +216,17 @@ input.invalid { border-color: #c0292d; }
   font-weight: 500;
   cursor: pointer;
   user-select: none;
+  color: var(--text);
 }
-.opt-row input[type="checkbox"] { cursor: pointer; accent-color: #1a1a1a; flex-shrink: 0; }
-.opt-hint { font-size: 11.5px; color: #999; padding-left: 22px; }
+.opt-row input[type="checkbox"] { cursor: pointer; accent-color: var(--text); flex-shrink: 0; }
+.opt-hint { font-size: 11.5px; color: var(--muted); padding-left: 22px; }
 
 /* ── Button ── */
 .run-btn {
   width: 100%;
   padding: 8px 0;
-  background: #1a1a1a;
-  color: #fff;
+  background: var(--btn-bg);
+  color: var(--btn-text);
   border: none;
   border-radius: 4px;
   font-size: 13.5px;
@@ -130,30 +245,25 @@ input.invalid { border-color: #c0292d; }
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: #999;
+  color: var(--muted);
   margin-bottom: 10px;
 }
 
 /* ── Stage progress strip ── */
-.stage-strip {
-  display: flex;
-  margin-bottom: 20px;
-}
+.stage-strip { display: flex; margin-bottom: 20px; }
 
 .stage {
   flex: 1;
   position: relative;
   text-align: center;
   font-size: 10.5px;
-  color: #bbb;
+  color: var(--muted);
   padding-top: 22px;
   transition: color 0.25s;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-/* Circle */
 .stage::before {
   content: '';
   position: absolute;
@@ -161,12 +271,10 @@ input.invalid { border-color: #c0292d; }
   transform: translateX(-50%);
   width: 10px; height: 10px;
   border-radius: 50%;
-  background: #e0e0e0;
+  background: var(--stage-off);
   transition: background 0.25s;
   z-index: 1;
 }
-
-/* Connecting line — full width to next circle */
 .stage::after {
   content: '';
   position: absolute;
@@ -174,14 +282,14 @@ input.invalid { border-color: #c0292d; }
   left: calc(50% + 5px);
   width: calc(100% - 10px);
   height: 2px;
-  background: #e0e0e0;
+  background: var(--stage-off);
   transition: background 0.25s;
 }
 .stage:last-child::after { display: none; }
 
-.stage.active { color: #1a1a1a; }
-.stage.active::before { background: #1a1a1a; }
-.stage.active::after  { background: #1a1a1a; }
+.stage.active { color: var(--text); }
+.stage.active::before { background: var(--text); }
+.stage.active::after  { background: var(--text); }
 
 /* ── Log ── */
 #log-section { margin-bottom: 28px; }
@@ -192,11 +300,11 @@ input.invalid { border-color: #c0292d; }
   justify-content: space-between;
   margin-bottom: 8px;
 }
-.log-toolbar .opt-row { font-size: 12px; font-weight: 400; color: #666; }
+.log-toolbar .opt-row { font-size: 12px; font-weight: 400; color: var(--desc); }
 
 #log {
-  background: #f7f7f7;
-  border: 1px solid #e4e4e4;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 12px 14px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
@@ -206,10 +314,11 @@ input.invalid { border-color: #c0292d; }
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-all;
+  color: var(--log-text);
 }
 
-.log-line         { display: block; color: #2a2a2a; }
-.log-line.verbose { color: #aaa; }
+.log-line         { display: block; color: var(--log-text); }
+.log-line.verbose { color: var(--muted); }
 .log-line.verbose.hide { display: none; }
 
 /* ── Result ── */
@@ -222,9 +331,9 @@ input.invalid { border-color: #c0292d; }
   border: 1px solid;
   margin-bottom: 16px;
 }
-.result-badge.found   { background: #f4fbf4; border-color: #b3d4b3; color: #2a5a2a; }
-.result-badge.spoken  { background: #fdf9f2; border-color: #ddd0b0; color: #5a4820; }
-.result-badge.missing { background: #f8f8f8; border-color: #ddd;    color: #555;    }
+.result-badge.found   { background: var(--badge-found-bg);   border-color: var(--badge-found-border);   color: var(--badge-found-text);   }
+.result-badge.spoken  { background: var(--badge-spoken-bg);  border-color: var(--badge-spoken-border);  color: var(--badge-spoken-text);  }
+.result-badge.missing { background: var(--badge-missing-bg); border-color: var(--badge-missing-border); color: var(--badge-missing-text); }
 
 .meta-grid {
   display: grid;
@@ -233,17 +342,18 @@ input.invalid { border-color: #c0292d; }
   font-size: 13px;
   margin-bottom: 18px;
 }
-.meta-key { color: #888; white-space: nowrap; }
+.meta-key { color: var(--muted); white-space: nowrap; }
 .meta-val {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
   word-break: break-all;
+  color: var(--text);
 }
 
 #result-img {
   max-width: 100%;
   max-height: 480px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border);
   border-radius: 4px;
   display: block;
 }
@@ -254,20 +364,20 @@ input.invalid { border-color: #c0292d; }
   align-items: center;
   justify-content: center;
   height: 260px;
-  color: #bbb;
+  color: var(--muted);
   font-size: 13px;
-  border: 1px dashed #e0e0e0;
+  border: 1px dashed var(--border);
   border-radius: 4px;
 }
 
-/* ── Responsive collapse — hide handle, stack panels ── */
+/* ── Responsive collapse ── */
 @media (max-width: 768px) {
   .layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto auto;
   }
   .resize-handle { display: none; }
-  .sidebar { border-bottom: 1px solid #e5e5e5; padding: 24px 20px; }
+  .sidebar { border-bottom: 1px solid var(--border); padding: 24px 20px; }
   .main    { padding: 24px 20px; }
   .run-btn { margin-top: 0; }
 }
@@ -280,7 +390,10 @@ input.invalid { border-color: #c0292d; }
 
   <!-- ── Left: form ── -->
   <aside class="sidebar">
-    <div class="app-title">Frame Extractor</div>
+    <div class="header-row">
+      <div class="app-title">Frame Extractor</div>
+      <button class="theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">Dark</button>
+    </div>
     <p class="app-desc">Find the first frame where a phrase is spoken or shown on screen.</p>
 
     <form id="main-form" novalidate autocomplete="off">
@@ -369,29 +482,36 @@ input.invalid { border-color: #c0292d; }
 <script>
 'use strict';
 
-// ── Refs ──
-const layout      = document.getElementById('layout');
-const handle      = document.getElementById('resize-handle');
-const form        = document.getElementById('main-form');
-const submitBtn   = document.getElementById('submit-btn');
-const verboseChk  = document.getElementById('verbose');
-const logEl       = document.getElementById('log');
-const logSection  = document.getElementById('log-section');
-const stageStrip  = document.getElementById('stage-strip');
-const resultSec   = document.getElementById('result-section');
-const emptyState  = document.getElementById('empty-state');
+// ── Theme toggle ──
+const toggleBtn = document.getElementById('theme-toggle');
 
-// ── Resize handle (Pointer Events — handles mouse + touch in one path) ──
-const SIDEBAR_MIN = 200;
-const SIDEBAR_MAX = 600;
+function getTheme() {
+  return document.documentElement.getAttribute('data-theme') ||
+    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  toggleBtn.textContent = theme === 'dark' ? 'Light' : 'Dark';
+  localStorage.setItem('theme', theme);
+}
+
+// Sync label to current state on load
+applyTheme(getTheme());
+
+toggleBtn.addEventListener('click', () => applyTheme(getTheme() === 'dark' ? 'light' : 'dark'));
+
+// ── Resize handle ──
+const layout = document.getElementById('layout');
+const handle = document.getElementById('resize-handle');
+const SIDEBAR_MIN = 200, SIDEBAR_MAX = 600;
 
 handle.addEventListener('pointerdown', e => {
   e.preventDefault();
-  handle.setPointerCapture(e.pointerId);   // keep events even if pointer leaves handle
+  handle.setPointerCapture(e.pointerId);
   handle.classList.add('dragging');
-  document.body.style.cursor      = 'col-resize';
-  document.body.style.userSelect  = 'none';
-
+  document.body.style.cursor     = 'col-resize';
+  document.body.style.userSelect = 'none';
   handle.addEventListener('pointermove', onDragMove);
   handle.addEventListener('pointerup', onDragEnd, { once: true });
 });
@@ -400,7 +520,6 @@ function onDragMove(e) {
   const w = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, e.clientX));
   layout.style.gridTemplateColumns = `${w}px 6px 1fr`;
 }
-
 function onDragEnd() {
   handle.removeEventListener('pointermove', onDragMove);
   handle.classList.remove('dragging');
@@ -410,7 +529,6 @@ function onDragEnd() {
 
 // ── Stage progress ──
 const STAGE_ORDER = ['ingest', 'prior', 'roi', 'scan', 'done'];
-
 const STAGE_PATTERNS = [
   { key: 'ingest', re: /^\[ingest\]/ },
   { key: 'prior',  re: /^\[(prior|pipeline)\].*?(subtitle|audio|transcript)/i },
@@ -418,30 +536,31 @@ const STAGE_PATTERNS = [
   { key: 'scan',   re: /^\[pipeline\].*?visual scan|\[scan\]/i },
   { key: 'done',   re: /^(FOUND|NOT_FOUND|SPOKEN_NOT_SHOWN)/ },
 ];
-
 let currentStageIdx = -1;
 
 function resetStages() {
   currentStageIdx = -1;
-  stageStrip.querySelectorAll('.stage').forEach(el => el.classList.remove('active'));
+  document.getElementById('stage-strip').querySelectorAll('.stage')
+    .forEach(el => el.classList.remove('active'));
 }
 
 function advanceStage(line) {
   for (const { key, re } of STAGE_PATTERNS) {
     if (!re.test(line)) continue;
     const idx = STAGE_ORDER.indexOf(key);
-    if (idx <= currentStageIdx) return;   // never go backwards
+    if (idx <= currentStageIdx) return;
     currentStageIdx = idx;
-    stageStrip.querySelectorAll('.stage').forEach(el => {
-      const elIdx = STAGE_ORDER.indexOf(el.dataset.key);
-      el.classList.toggle('active', elIdx <= currentStageIdx);
+    document.getElementById('stage-strip').querySelectorAll('.stage').forEach(el => {
+      el.classList.toggle('active', STAGE_ORDER.indexOf(el.dataset.key) <= currentStageIdx);
     });
     return;
   }
 }
 
-// ── Verbose toggle ──
+// ── Log ──
 const VERBOSE_RE = /^\[(scan|ocr|raw|prior|roi)\b/;
+const logEl      = document.getElementById('log');
+const verboseChk = document.getElementById('verbose');
 
 function appendLog(text) {
   const span = document.createElement('span');
@@ -456,9 +575,8 @@ function appendLog(text) {
 }
 
 verboseChk.addEventListener('change', () => {
-  logEl.querySelectorAll('.log-line.verbose').forEach(el => {
-    el.classList.toggle('hide', !verboseChk.checked);
-  });
+  logEl.querySelectorAll('.log-line.verbose')
+    .forEach(el => el.classList.toggle('hide', !verboseChk.checked));
 });
 
 // ── Validation ──
@@ -466,68 +584,58 @@ function clearErrors() {
   ['url', 'phrase'].forEach(id => {
     document.getElementById(id).classList.remove('invalid');
     const e = document.getElementById(id + '-error');
-    e.style.display = 'none';
-    e.textContent   = '';
+    e.style.display = 'none'; e.textContent = '';
   });
 }
-
 function showFieldError(field, msg) {
   document.getElementById(field).classList.add('invalid');
   const e = document.getElementById(field + '-error');
-  e.textContent   = msg;
-  e.style.display = 'block';
+  e.textContent = msg; e.style.display = 'block';
 }
-
-function sanitiseUrl(raw) {
-  return raw.trim().replace(/\\([?=#&])/g, '$1');
-}
+function sanitiseUrl(raw) { return raw.trim().replace(/\\([?=#&])/g, '$1'); }
 
 function clientValidate(url, phrase) {
   let ok = true;
-  if (!url) {
-    showFieldError('url', 'URL is required'); ok = false;
-  } else {
+  if (!url) { showFieldError('url', 'URL is required'); ok = false; }
+  else {
     try {
       const p = new URL(url);
       if (!['http:', 'https:'].includes(p.protocol)) {
         showFieldError('url', 'Only http:// and https:// URLs are supported'); ok = false;
       }
-    } catch {
-      showFieldError('url', 'Enter a valid URL including http:// or https://'); ok = false;
-    }
+    } catch { showFieldError('url', 'Enter a valid URL including http:// or https://'); ok = false; }
   }
   if (!phrase) { showFieldError('phrase', 'Target phrase is required'); ok = false; }
   return ok;
 }
 
-// ── Result rendering ──
+// ── Result ──
 function showResult(data, taskId) {
+  const resultSec = document.getElementById('result-section');
   resultSec.hidden = false;
   const badge = document.getElementById('result-badge');
   const meta  = document.getElementById('meta-grid');
   const img   = document.getElementById('result-img');
-  img.hidden  = true;
-  meta.hidden = true;
+  img.hidden = true; meta.hidden = true;
 
   if (data.status === 'FOUND') {
-    badge.className   = 'result-badge found';
+    badge.className = 'result-badge found';
     badge.textContent = 'Match found';
     meta.hidden = false;
     const rows = [
-      ['Timestamp',    data.timestamp != null ? data.timestamp.toFixed(3) + 's' : '—'],
-      ['Frame',        data.frame_number ?? '—'],
+      ['Timestamp', data.timestamp != null ? data.timestamp.toFixed(3) + 's' : '—'],
+      ['Frame',     data.frame_number ?? '—'],
     ];
     if (data.frame) rows.push(['Saved to', data.frame]);
     meta.innerHTML = rows.map(([k, v]) =>
       `<span class="meta-key">${k}</span><span class="meta-val">${String(v).replace(/</g,'&lt;')}</span>`
     ).join('');
-    img.src    = `/frame/${taskId}?t=${Date.now()}`;
-    img.hidden = false;
+    img.src = `/frame/${taskId}?t=${Date.now()}`; img.hidden = false;
   } else if (data.status === 'SPOKEN_NOT_SHOWN') {
-    badge.className   = 'result-badge spoken';
+    badge.className = 'result-badge spoken';
     badge.textContent = 'Spoken, not shown — audio matched; no on-screen text found';
   } else {
-    badge.className   = 'result-badge missing';
+    badge.className = 'result-badge missing';
     badge.textContent = data.status === 'ERROR'
       ? 'Error — check the log for details'
       : 'Not found — no match in audio or on screen';
@@ -535,7 +643,13 @@ function showResult(data, taskId) {
 }
 
 // ── Form submit ──
-form.addEventListener('submit', async e => {
+const submitBtn  = document.getElementById('submit-btn');
+const logSection = document.getElementById('log-section');
+const stageStrip = document.getElementById('stage-strip');
+const resultSec  = document.getElementById('result-section');
+const emptyState = document.getElementById('empty-state');
+
+document.getElementById('main-form').addEventListener('submit', async e => {
   e.preventDefault();
   clearErrors();
 
@@ -546,7 +660,6 @@ form.addEventListener('submit', async e => {
 
   if (!clientValidate(url, phrase)) return;
 
-  // Reset UI
   submitBtn.disabled    = true;
   submitBtn.textContent = 'Running…';
   logEl.innerHTML       = '';
@@ -556,7 +669,6 @@ form.addEventListener('submit', async e => {
   emptyState.hidden     = true;
   resetStages();
 
-  // POST /run
   let taskId;
   try {
     const res  = await fetch('/run', {
@@ -568,37 +680,29 @@ form.addEventListener('submit', async e => {
     if (!res.ok) {
       const field = (body.error || '').toLowerCase().includes('url') ? 'url' : 'phrase';
       showFieldError(field, body.error || 'Server error');
-      submitBtn.disabled    = false;
-      submitBtn.textContent = 'Extract Frame';
+      submitBtn.disabled = false; submitBtn.textContent = 'Extract Frame';
       return;
     }
     taskId = body.task_id;
   } catch {
     showFieldError('url', 'Could not connect to the server');
-    submitBtn.disabled    = false;
-    submitBtn.textContent = 'Extract Frame';
+    submitBtn.disabled = false; submitBtn.textContent = 'Extract Frame';
     return;
   }
 
-  // Stream progress via SSE
   const evtSrc = new EventSource(`/stream/${taskId}`);
-
   evtSrc.onmessage = ev => appendLog(ev.data);
-
   evtSrc.addEventListener('done', ev => {
     evtSrc.close();
-    submitBtn.disabled    = false;
-    submitBtn.textContent = 'Extract Frame';
+    submitBtn.disabled = false; submitBtn.textContent = 'Extract Frame';
     document.getElementById('retranscribe').checked = false;
     try { showResult(JSON.parse(ev.data), taskId); }
     catch { appendLog('[error] Could not parse result'); }
   });
-
   evtSrc.onerror = () => {
     evtSrc.close();
     appendLog('[error] Lost connection to server');
-    submitBtn.disabled    = false;
-    submitBtn.textContent = 'Extract Frame';
+    submitBtn.disabled = false; submitBtn.textContent = 'Extract Frame';
   };
 });
 </script>

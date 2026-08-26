@@ -5,3 +5,4 @@ opencv-python
 faster-whisper
 rapidfuzz
 flask
+pytest
