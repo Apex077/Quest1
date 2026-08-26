@@ -4,3 +4,4 @@ easyocr
 opencv-python
 faster-whisper
 rapidfuzz
+flask

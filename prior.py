@@ -107,12 +107,16 @@ def _save_transcript(audio_path: Path, segments: list[dict]) -> None:
     _transcript_cache(audio_path).write_text(json.dumps(segments))
 
 
-def audio_prior(audio_path: Path, target: str) -> list[tuple[float, float]]:
+def audio_prior(audio_path: Path, target: str, force_retranscribe: bool = False) -> list[tuple[float, float]]:
     """
     Transcribe audio with faster-whisper (base model, CPU, int8),
     return segment windows whose text fuzzy-matches the target.
     Transcript is cached as audio.transcript.json — subsequent calls skip transcription.
     """
+    if force_retranscribe:
+        _transcript_cache(audio_path).unlink(missing_ok=True)
+        print("[prior] Cleared cached transcript — re-transcribing")
+
     cached = _load_transcript(audio_path)
     if cached is not None:
         print("[prior] Using cached transcript")

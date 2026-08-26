@@ -42,7 +42,7 @@ def _report(result: ScanResult, out_dir: Path) -> None:
         print(f"NOT_FOUND — scanned {result.coverage * 100:.0f}% of video, no visual match")
 
 
-def run(info: VideoInfo, target: str, out_dir: Path, use_ocr: bool = False) -> ScanResult:
+def run(info: VideoInfo, target: str, out_dir: Path, use_ocr: bool = False, force_retranscribe: bool = False) -> ScanResult:
     # --- Subtitle prior (cheapest; ffprobe on local file, always available) ---
     print("[pipeline] Checking embedded subtitle tracks...")
     sub_windows = subtitle_prior(info.video_path, target)
@@ -53,7 +53,7 @@ def run(info: VideoInfo, target: str, out_dir: Path, use_ocr: bool = False) -> S
     audio_had_hit = False
     if not sub_windows and info.audio_path:
         print("[pipeline] No subtitle match — transcribing audio...")
-        audio_windows = audio_prior(info.audio_path, target)
+        audio_windows = audio_prior(info.audio_path, target, force_retranscribe=force_retranscribe)
         audio_had_hit = bool(audio_windows)
         print(f"[pipeline] Audio windows matched: {audio_windows or 'none'}")
 
@@ -99,8 +99,9 @@ if __name__ == "__main__":
     url = args[0]
     target = args[1]
     use_ocr = "--use-ocr" in args
-    remaining = [a for a in args[2:] if a != "--use-ocr"]
+    force_retranscribe = "--retranscribe" in args
+    remaining = [a for a in args[2:] if a not in ("--use-ocr", "--retranscribe")]
     out_dir = Path(remaining[0]) if remaining else Path("downloads")
 
     info = ingest(url, out_dir)
-    run(info, target, out_dir, use_ocr=use_ocr)
+    run(info, target, out_dir, use_ocr=use_ocr, force_retranscribe=force_retranscribe)

@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frame Extractor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1a1a1a;
+  background: #fff;
+}
+
+/* ── Three-column grid: sidebar | handle | main ── */
+.layout {
+  display: grid;
+  grid-template-columns: 320px 6px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  padding: 36px 28px 48px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;          /* content clips cleanly when sidebar narrows */
+}
+
+/* ── Resize handle ── */
+.resize-handle {
+  cursor: col-resize;
+  touch-action: none;        /* prevents scroll hijack on touch */
+  background: #e5e5e5;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 10;
+}
+.resize-handle:hover,
+.resize-handle.dragging { background: #bbb; }
+
+.main {
+  padding: 36px 36px 48px;
+  overflow-y: auto;
+  min-width: 0;              /* lets grid item shrink below content width */
+}
+
+/* ── Header ── */
+.app-title { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; margin-bottom: 4px; white-space: nowrap; }
+.app-desc  { font-size: 12.5px; color: #666; line-height: 1.5; margin-bottom: 28px; }
+
+hr {
+  border: none;
+  border-top: 1px solid #e5e5e5;
+  margin: 20px 0;
+}
+
+/* ── Form fields ── */
+.field { margin-bottom: 16px; }
+
+.field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #444;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 5px;
+}
+
+input[type="text"],
+input[type="url"] {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid #d4d4d4;
+  border-radius: 4px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #1a1a1a;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.1s;
+}
+input:focus { border-color: #888; }
+input.invalid { border-color: #c0292d; }
+
+.field-hint  { font-size: 11.5px; color: #999; margin-top: 3px; }
+.field-error { font-size: 11.5px; color: #c0292d; margin-top: 3px; display: none; }
+
+/* ── Checkbox options ── */
+.options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.opt-item { display: flex; flex-direction: column; gap: 1px; }
+.opt-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+.opt-row input[type="checkbox"] { cursor: pointer; accent-color: #1a1a1a; flex-shrink: 0; }
+.opt-hint { font-size: 11.5px; color: #999; padding-left: 22px; }
+
+/* ── Button ── */
+.run-btn {
+  width: 100%;
+  padding: 8px 0;
+  background: #1a1a1a;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 13.5px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 0.1s;
+  margin-top: auto;
+}
+.run-btn:hover:not(:disabled) { opacity: 0.78; }
+.run-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Section label ── */
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #999;
+  margin-bottom: 10px;
+}
+
+/* ── Stage progress strip ── */
+.stage-strip {
+  display: flex;
+  margin-bottom: 20px;
+}
+
+.stage {
+  flex: 1;
+  position: relative;
+  text-align: center;
+  font-size: 10.5px;
+  color: #bbb;
+  padding-top: 22px;
+  transition: color 0.25s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Circle */
+.stage::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #e0e0e0;
+  transition: background 0.25s;
+  z-index: 1;
+}
+
+/* Connecting line — full width to next circle */
+.stage::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: calc(50% + 5px);
+  width: calc(100% - 10px);
+  height: 2px;
+  background: #e0e0e0;
+  transition: background 0.25s;
+}
+.stage:last-child::after { display: none; }
+
+.stage.active { color: #1a1a1a; }
+.stage.active::before { background: #1a1a1a; }
+.stage.active::after  { background: #1a1a1a; }
+
+/* ── Log ── */
+#log-section { margin-bottom: 28px; }
+
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.log-toolbar .opt-row { font-size: 12px; font-weight: 400; color: #666; }
+
+#log {
+  background: #f7f7f7;
+  border: 1px solid #e4e4e4;
+  border-radius: 4px;
+  padding: 12px 14px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.8;
+  height: 260px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-line         { display: block; color: #2a2a2a; }
+.log-line.verbose { color: #aaa; }
+.log-line.verbose.hide { display: none; }
+
+/* ── Result ── */
+.result-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 3px;
+  border: 1px solid;
+  margin-bottom: 16px;
+}
+.result-badge.found   { background: #f4fbf4; border-color: #b3d4b3; color: #2a5a2a; }
+.result-badge.spoken  { background: #fdf9f2; border-color: #ddd0b0; color: #5a4820; }
+.result-badge.missing { background: #f8f8f8; border-color: #ddd;    color: #555;    }
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 20px;
+  font-size: 13px;
+  margin-bottom: 18px;
+}
+.meta-key { color: #888; white-space: nowrap; }
+.meta-val {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+#result-img {
+  max-width: 100%;
+  max-height: 480px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  display: block;
+}
+
+/* ── Empty state ── */
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 260px;
+  color: #bbb;
+  font-size: 13px;
+  border: 1px dashed #e0e0e0;
+  border-radius: 4px;
+}
+
+/* ── Responsive collapse — hide handle, stack panels ── */
+@media (max-width: 768px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+  .resize-handle { display: none; }
+  .sidebar { border-bottom: 1px solid #e5e5e5; padding: 24px 20px; }
+  .main    { padding: 24px 20px; }
+  .run-btn { margin-top: 0; }
+}
+
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="layout" id="layout">
+
+  <!-- ── Left: form ── -->
+  <aside class="sidebar">
+    <div class="app-title">Frame Extractor</div>
+    <p class="app-desc">Find the first frame where a phrase is spoken or shown on screen.</p>
+
+    <form id="main-form" novalidate autocomplete="off">
+
+      <div class="field">
+        <label for="url">Video URL</label>
+        <input type="url" id="url" placeholder="https://…" spellcheck="false">
+        <div class="field-error" id="url-error"></div>
+        <div class="field-hint">YouTube, ok.ru, and other yt-dlp sources.</div>
+      </div>
+
+      <div class="field">
+        <label for="phrase">Target phrase</label>
+        <input type="text" id="phrase" placeholder="e.g. my mind rebels at stagnation">
+        <div class="field-error" id="phrase-error"></div>
+        <div class="field-hint">Fuzzy matching — near-matches count.</div>
+      </div>
+
+      <hr>
+
+      <div class="options">
+        <div class="opt-item">
+          <label class="opt-row">
+            <input type="checkbox" id="retranscribe">
+            Regenerate transcript
+          </label>
+          <div class="opt-hint">Clears cached audio transcript and re-runs Whisper</div>
+        </div>
+        <div class="opt-item">
+          <label class="opt-row">
+            <input type="checkbox" id="use-ocr">
+            OCR mode (beta)
+          </label>
+          <div class="opt-hint">Visual text scan — slow, struggles with stylised fonts</div>
+        </div>
+      </div>
+
+      <hr>
+
+      <button type="submit" class="run-btn" id="submit-btn">Extract Frame</button>
+
+    </form>
+  </aside>
+
+  <!-- ── Drag handle ── -->
+  <div class="resize-handle" id="resize-handle" aria-hidden="true"></div>
+
+  <!-- ── Right: output ── -->
+  <main class="main">
+
+    <!-- Stage progress strip -->
+    <div id="stage-strip" class="stage-strip" hidden>
+      <div class="stage" data-key="ingest">Download</div>
+      <div class="stage" data-key="prior">Prior</div>
+      <div class="stage" data-key="roi">Region</div>
+      <div class="stage" data-key="scan">Scan</div>
+      <div class="stage" data-key="done">Done</div>
+    </div>
+
+    <!-- Progress log -->
+    <div id="log-section" hidden>
+      <div class="log-toolbar">
+        <div class="section-label">Progress</div>
+        <label class="opt-row">
+          <input type="checkbox" id="verbose">
+          Verbose
+        </label>
+      </div>
+      <div id="log"></div>
+    </div>
+
+    <!-- Result -->
+    <div id="result-section" hidden>
+      <div class="section-label" style="margin-bottom:12px">Result</div>
+      <div id="result-badge" class="result-badge"></div>
+      <div id="meta-grid" class="meta-grid" hidden></div>
+      <img id="result-img" hidden alt="Extracted frame">
+    </div>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="empty-state">Run an extraction to see results here.</div>
+
+  </main>
+</div>
+
+<script>
+'use strict';
+
+// ── Refs ──
+const layout      = document.getElementById('layout');
+const handle      = document.getElementById('resize-handle');
+const form        = document.getElementById('main-form');
+const submitBtn   = document.getElementById('submit-btn');
+const verboseChk  = document.getElementById('verbose');
+const logEl       = document.getElementById('log');
+const logSection  = document.getElementById('log-section');
+const stageStrip  = document.getElementById('stage-strip');
+const resultSec   = document.getElementById('result-section');
+const emptyState  = document.getElementById('empty-state');
+
+// ── Resize handle (Pointer Events — handles mouse + touch in one path) ──
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 600;
+
+handle.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  handle.setPointerCapture(e.pointerId);   // keep events even if pointer leaves handle
+  handle.classList.add('dragging');
+  document.body.style.cursor      = 'col-resize';
+  document.body.style.userSelect  = 'none';
+
+  handle.addEventListener('pointermove', onDragMove);
+  handle.addEventListener('pointerup', onDragEnd, { once: true });
+});
+
+function onDragMove(e) {
+  const w = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, e.clientX));
+  layout.style.gridTemplateColumns = `${w}px 6px 1fr`;
+}
+
+function onDragEnd() {
+  handle.removeEventListener('pointermove', onDragMove);
+  handle.classList.remove('dragging');
+  document.body.style.cursor     = '';
+  document.body.style.userSelect = '';
+}
+
+// ── Stage progress ──
+const STAGE_ORDER = ['ingest', 'prior', 'roi', 'scan', 'done'];
+
+const STAGE_PATTERNS = [
+  { key: 'ingest', re: /^\[ingest\]/ },
+  { key: 'prior',  re: /^\[(prior|pipeline)\].*?(subtitle|audio|transcript)/i },
+  { key: 'roi',    re: /^\[pipeline\].*?(sampling|region|roi)/i },
+  { key: 'scan',   re: /^\[pipeline\].*?visual scan|\[scan\]/i },
+  { key: 'done',   re: /^(FOUND|NOT_FOUND|SPOKEN_NOT_SHOWN)/ },
+];
+
+let currentStageIdx = -1;
+
+function resetStages() {
+  currentStageIdx = -1;
+  stageStrip.querySelectorAll('.stage').forEach(el => el.classList.remove('active'));
+}
+
+function advanceStage(line) {
+  for (const { key, re } of STAGE_PATTERNS) {
+    if (!re.test(line)) continue;
+    const idx = STAGE_ORDER.indexOf(key);
+    if (idx <= currentStageIdx) return;   // never go backwards
+    currentStageIdx = idx;
+    stageStrip.querySelectorAll('.stage').forEach(el => {
+      const elIdx = STAGE_ORDER.indexOf(el.dataset.key);
+      el.classList.toggle('active', elIdx <= currentStageIdx);
+    });
+    return;
+  }
+}
+
+// ── Verbose toggle ──
+const VERBOSE_RE = /^\[(scan|ocr|raw|prior|roi)\b/;
+
+function appendLog(text) {
+  const span = document.createElement('span');
+  const isVerbose = VERBOSE_RE.test(text);
+  span.className = 'log-line' + (isVerbose ? ' verbose' : '');
+  if (isVerbose && !verboseChk.checked) span.classList.add('hide');
+  span.textContent = text;
+  logEl.appendChild(span);
+  logEl.appendChild(document.createTextNode('\n'));
+  logEl.scrollTop = logEl.scrollHeight;
+  advanceStage(text);
+}
+
+verboseChk.addEventListener('change', () => {
+  logEl.querySelectorAll('.log-line.verbose').forEach(el => {
+    el.classList.toggle('hide', !verboseChk.checked);
+  });
+});
+
+// ── Validation ──
+function clearErrors() {
+  ['url', 'phrase'].forEach(id => {
+    document.getElementById(id).classList.remove('invalid');
+    const e = document.getElementById(id + '-error');
+    e.style.display = 'none';
+    e.textContent   = '';
+  });
+}
+
+function showFieldError(field, msg) {
+  document.getElementById(field).classList.add('invalid');
+  const e = document.getElementById(field + '-error');
+  e.textContent   = msg;
+  e.style.display = 'block';
+}
+
+function sanitiseUrl(raw) {
+  return raw.trim().replace(/\\([?=#&])/g, '$1');
+}
+
+function clientValidate(url, phrase) {
+  let ok = true;
+  if (!url) {
+    showFieldError('url', 'URL is required'); ok = false;
+  } else {
+    try {
+      const p = new URL(url);
+      if (!['http:', 'https:'].includes(p.protocol)) {
+        showFieldError('url', 'Only http:// and https:// URLs are supported'); ok = false;
+      }
+    } catch {
+      showFieldError('url', 'Enter a valid URL including http:// or https://'); ok = false;
+    }
+  }
+  if (!phrase) { showFieldError('phrase', 'Target phrase is required'); ok = false; }
+  return ok;
+}
+
+// ── Result rendering ──
+function showResult(data, taskId) {
+  resultSec.hidden = false;
+  const badge = document.getElementById('result-badge');
+  const meta  = document.getElementById('meta-grid');
+  const img   = document.getElementById('result-img');
+  img.hidden  = true;
+  meta.hidden = true;
+
+  if (data.status === 'FOUND') {
+    badge.className   = 'result-badge found';
+    badge.textContent = 'Match found';
+    meta.hidden = false;
+    const rows = [
+      ['Timestamp',    data.timestamp != null ? data.timestamp.toFixed(3) + 's' : '—'],
+      ['Frame',        data.frame_number ?? '—'],
+    ];
+    if (data.frame) rows.push(['Saved to', data.frame]);
+    meta.innerHTML = rows.map(([k, v]) =>
+      `<span class="meta-key">${k}</span><span class="meta-val">${String(v).replace(/</g,'&lt;')}</span>`
+    ).join('');
+    img.src    = `/frame/${taskId}?t=${Date.now()}`;
+    img.hidden = false;
+  } else if (data.status === 'SPOKEN_NOT_SHOWN') {
+    badge.className   = 'result-badge spoken';
+    badge.textContent = 'Spoken, not shown — audio matched; no on-screen text found';
+  } else {
+    badge.className   = 'result-badge missing';
+    badge.textContent = data.status === 'ERROR'
+      ? 'Error — check the log for details'
+      : 'Not found — no match in audio or on screen';
+  }
+}
+
+// ── Form submit ──
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  clearErrors();
+
+  const url    = sanitiseUrl(document.getElementById('url').value);
+  const phrase = document.getElementById('phrase').value.trim();
+  const useOcr = document.getElementById('use-ocr').checked;
+  const forceRetranscribe = document.getElementById('retranscribe').checked;
+
+  if (!clientValidate(url, phrase)) return;
+
+  // Reset UI
+  submitBtn.disabled    = true;
+  submitBtn.textContent = 'Running…';
+  logEl.innerHTML       = '';
+  logSection.hidden     = false;
+  stageStrip.hidden     = false;
+  resultSec.hidden      = true;
+  emptyState.hidden     = true;
+  resetStages();
+
+  // POST /run
+  let taskId;
+  try {
+    const res  = await fetch('/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, phrase, use_ocr: useOcr, force_retranscribe: forceRetranscribe }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      const field = (body.error || '').toLowerCase().includes('url') ? 'url' : 'phrase';
+      showFieldError(field, body.error || 'Server error');
+      submitBtn.disabled    = false;
+      submitBtn.textContent = 'Extract Frame';
+      return;
+    }
+    taskId = body.task_id;
+  } catch {
+    showFieldError('url', 'Could not connect to the server');
+    submitBtn.disabled    = false;
+    submitBtn.textContent = 'Extract Frame';
+    return;
+  }
+
+  // Stream progress via SSE
+  const evtSrc = new EventSource(`/stream/${taskId}`);
+
+  evtSrc.onmessage = ev => appendLog(ev.data);
+
+  evtSrc.addEventListener('done', ev => {
+    evtSrc.close();
+    submitBtn.disabled    = false;
+    submitBtn.textContent = 'Extract Frame';
+    document.getElementById('retranscribe').checked = false;
+    try { showResult(JSON.parse(ev.data), taskId); }
+    catch { appendLog('[error] Could not parse result'); }
+  });
+
+  evtSrc.onerror = () => {
+    evtSrc.close();
+    appendLog('[error] Lost connection to server');
+    submitBtn.disabled    = false;
+    submitBtn.textContent = 'Extract Frame';
+  };
+});
+</script>
+</body>
+</html>
