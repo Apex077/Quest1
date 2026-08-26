@@ -529,6 +529,13 @@ select:focus { border-color: var(--muted); }
 // ── Theme toggle ──
 const toggleBtn = document.getElementById('theme-toggle');
 
+function fmtTs(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = (sec % 60).toFixed(3).padStart(6, '0');
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${s}`;
+}
+
 function getTheme() {
   return document.documentElement.getAttribute('data-theme') ||
     (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -667,7 +674,7 @@ function showResult(data, taskId) {
     badge.textContent = 'Match found';
     meta.hidden = false;
     const rows = [
-      ['Timestamp', data.timestamp != null ? data.timestamp.toFixed(3) + 's' : '—'],
+      ['Timestamp', data.timestamp != null ? fmtTs(data.timestamp) : '—'],
       ['Frame',     data.frame_number ?? '—'],
     ];
     if (data.frame) rows.push(['Saved to', data.frame]);
