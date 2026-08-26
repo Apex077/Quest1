@@ -20,6 +20,13 @@ from prior import audio_prior, subtitle_prior, vtt_prior
 from scan import ScanResult, extract_frame_at, find_first
 
 
+def _fmt_ts(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+
 def _save_frame(frame, out_dir: Path, timestamp: float) -> Path:
     path = out_dir / f"match_{timestamp:.3f}s.jpg"
     cv2.imwrite(str(path), frame)
@@ -29,9 +36,10 @@ def _save_frame(frame, out_dir: Path, timestamp: float) -> Path:
 def _report(result: ScanResult, out_dir: Path) -> None:
     if result.status == "FOUND":
         assert result.frame_image is not None
+        assert result.timestamp is not None
         img_path = _save_frame(result.frame_image, out_dir, result.timestamp)
         print("FOUND")
-        print(f"  timestamp   : {result.timestamp:.3f}s")
+        print(f"  timestamp   : {_fmt_ts(result.timestamp)}")
         print(f"  frame       : {result.frame_number}")
         if result.ocr_text is not None:
             print(f"  ocr_text    : {result.ocr_text!r}")

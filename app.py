@@ -110,8 +110,10 @@ def _run_pipeline(
                 result["status"] = "NOT_FOUND"
             elif "timestamp" in line and ":" in line:
                 try:
-                    result["timestamp"] = float(line.split(":", 1)[1].strip().rstrip("s"))
-                except ValueError:
+                    ts_str = line.split(":", 1)[1].strip()
+                    h, m, s = ts_str.split(":")
+                    result["timestamp"] = int(h) * 3600 + int(m) * 60 + float(s)
+                except (ValueError, IndexError):
                     pass
             elif "frame       :" in line:
                 try:
