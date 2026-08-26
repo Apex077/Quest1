@@ -70,3 +70,16 @@ Apart from facing a couple of SSL issues (broken headers which I fixed by updati
 There are 2 main priors as mentioned in the architecture diagram, which get dynamically reordered based on which one is available. In addition, ```roi.py``` looks for where embedded subtitles could be located if present directly in the video file, and returns an area box of where it could be located. The ```prior.py``` file checks both audio and video priors. The ```pipeline.py``` consolidates all the functionality of the above files together to get the final result.
 
 Ended up doing a lot of fine-tuning and optimization, and got to a point where audio is pretty accurate for the most part, but the video OCR part seems to be acting up. I'm not sure if the model is acting up, or pre-processing is messing up it's accuracy. For now, I'll probably just add an optional feature flag for it for now, and I'll probably come back to it later.
+
+# Optimizations that I Made
+I realized that for Youtube videos atleast, we can rely on Youtube VTT auto-captions, which have word-level timestamps, that are generally more accurate, and are generally free to use, with no additional compute cost, improving efficiency.
+
+Earlier ```faster-whisper``` used to run on a segment basis, which caused reductions in accuracy since it gave a 5-30 second chunk, making it pretty inaccurate and uses word-level timestamp.
+
+I've also added different variations of the whisper model to make it more efficient at the cost of some accuracy, which is up to the user. After some further testing, I've decided that the OCR was not very effective, and added a lot of compute time, and I've ended up scrapping it, even though it did seem like a valid approach at the time.
+
+# Frontend
+I've kept the UI very minimal and basic intentionally since, I'm not really the best at frontend, and have added some basic QoL features like a dark mode, and verbose mode for easier debuggging.
+
+# Some Potential Issues to keep in mentioned
+The problems we generally face are typical problems that every web-scraper faces, like getting IP-banned, rate-limited, etc. I've faced a bunch of those issues, and though most of the major issues have been ironed out, there are still bound to be a couple of issues that will be faced, especially with the heavy anti-bot restrictions on these platforms.

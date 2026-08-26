@@ -3,6 +3,7 @@ Web UI for the frame extractor pipeline.
 Usage: python app.py   →  open http://localhost:5000
 """
 
+import hashlib
 import ipaddress
 import json
 import queue
@@ -69,12 +70,13 @@ _VALID_WHISPER_MODELS = {"tiny", "base", "small", "medium"}
 def _run_pipeline(
     task_id: str, url: str, phrase: str,
     use_ocr: bool, force_retranscribe: bool, whisper_model: str, keep_video: bool,
+    out_dir: str = "downloads",
 ) -> None:
     q: queue.Queue = _tasks[task_id]["queue"]
     cmd = [
         str(_VENV_PYTHON),
         str(BASE_DIR / "pipeline.py"),
-        url, phrase,
+        url, phrase, out_dir,
     ]
     if use_ocr:
         cmd.append("--use-ocr")
@@ -160,11 +162,15 @@ def run():
     if whisper_model not in _VALID_WHISPER_MODELS:
         whisper_model = "small"
 
+    # Per-URL subdirectory so concurrent runs on different URLs never share .part files
+    url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
+    task_out_dir = str(DOWNLOADS / url_hash)
+
     task_id = str(uuid.uuid4())
     _tasks[task_id] = {"queue": queue.Queue(), "result": None, "done": False, "proc": None, "cancelled": False}
     threading.Thread(
         target=_run_pipeline,
-        args=(task_id, url, phrase, use_ocr, force_retranscribe, whisper_model, keep_video),
+        args=(task_id, url, phrase, use_ocr, force_retranscribe, whisper_model, keep_video, task_out_dir),
         daemon=True,
     ).start()
     return jsonify({"task_id": task_id})
