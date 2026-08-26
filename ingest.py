@@ -26,11 +26,13 @@ _YDL_OPTS = {
     "impersonate": ImpersonateTarget(client="chrome"),
 }
 
-# Prefer H.264 MP4 — AV1 is unsupported by most OpenCV builds (no hw accel).
-# Falls back to any format if H.264 isn't available for the source.
+# Prefer H.264 progressive MP4 (direct HTTPS download).
+# Exclude AV1 (OpenCV can't decode) and m3u8/HLS (hundreds of fragments → connection-reset spam).
 _VIDEO_FORMAT = (
-    "bestvideo[ext=mp4][vcodec!*=av01]+bestaudio[ext=m4a]"
+    "bestvideo[ext=mp4][vcodec!*=av01][protocol!*=m3u8]+bestaudio[ext=m4a]"
+    "/bestvideo[ext=mp4][vcodec!*=av01]+bestaudio[ext=m4a]"
     "/bestvideo[ext=mp4]+bestaudio"
+    "/bestvideo[vcodec!*=av01][protocol!*=m3u8]+bestaudio"
     "/bestvideo[vcodec!*=av01]+bestaudio"
     "/bestvideo+bestaudio/best"
 )
@@ -67,6 +69,11 @@ def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[Path]]:
         for p in existing:
             p.unlink()
 
+    # Delete any stale .part files — resuming with an expired CDN URL causes
+    # an immediate connection reset before yt-dlp can even attempt retries.
+    for p in out_dir.glob("video.*.part"):
+        p.unlink()
+
     opts = {
         **_YDL_OPTS,
         "outtmpl": str(out_dir / "video.%(ext)s"),
@@ -75,6 +82,8 @@ def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[Path]]:
         "writeautomaticsub": True,
         "subtitleslangs": ["en", "en-US", "en-GB"],
         "subtitlesformat": "vtt",
+        "retries": 10,
+        "file_access_retries": 5,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
         ydl.extract_info(url, download=True)
