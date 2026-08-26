@@ -36,7 +36,7 @@ def extract_frame_at(video_path: Path, t: float) -> ScanResult:
     """Return the frame at time t without any OCR. Used in audio-only mode."""
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    frame_no = int(t * fps)
+    frame_no = round(t * fps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, float(frame_no))
     ok, frame = cap.read()
     cap.release()
@@ -96,7 +96,7 @@ def _ocr(reader, frame: np.ndarray, roi: tuple | None) -> str:
 def _check_frame(
     cap, reader, target, roi, fps, t, prev_frame, stats, skip_prefilter=False,
 ):
-    frame_no = int(t * fps)
+    frame_no = round(t * fps)
     cap.set(cv2.CAP_PROP_POS_FRAMES, float(frame_no))
     ok, frame = cap.read()
     if not ok:
@@ -144,22 +144,25 @@ def _scan_range(cap, reader, target, roi, fps, t_start, t_end, stride, stats,
     return best
 
 
-def _fine_scan(cap, reader, target, roi, fps, rough_t, stats):
+def _fine_scan(cap, reader, target, roi, fps, rough_t, stats, audio_had_hit=False):
     lookback = max(0.0, rough_t - (max(COARSE_STRIDE_S, PRIORITY_STRIDE_S) + 1.0))
     result = _scan_range(cap, reader, target, roi, fps, lookback, rough_t,
                          FINE_STRIDE_S, stats, stop_before=rough_t, skip_prefilter=True)
     if result is not None and result.timestamp is not None and result.timestamp < rough_t:
         return result
-    cap.set(cv2.CAP_PROP_POS_FRAMES, float(int(rough_t * fps)))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, float(round(rough_t * fps)))
     _, frame = cap.read()
     stats["ocr_calls"] += 1
     text = _ocr(reader, frame, roi) if frame is not None else ""
+    score = fuzz.WRatio(target.lower(), text.lower())
+    if score < FUZZY_THRESHOLD:
+        return ScanResult(status="SPOKEN_NOT_SHOWN" if audio_had_hit else "NOT_FOUND")
     return ScanResult(
         status="FOUND",
         timestamp=rough_t,
-        frame_number=int(rough_t * fps),
+        frame_number=round(rough_t * fps),
         ocr_text=text,
-        match_score=fuzz.WRatio(target.lower(), text.lower()),
+        match_score=float(score),
         frame_image=frame.copy() if frame is not None else None,
     )
 
@@ -215,7 +218,7 @@ def find_first(
           f"diff_skipped: {stats['diff_skipped']}, hint_skipped: {stats['hint_skipped']}")
 
     if rough_match is not None and rough_match.timestamp is not None:
-        result = _fine_scan(cap, reader, target, roi, fps, rough_match.timestamp, stats)
+        result = _fine_scan(cap, reader, target, roi, fps, rough_match.timestamp, stats, audio_had_hit)
         cap.release()
         return result
 

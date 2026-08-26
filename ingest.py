@@ -17,7 +17,7 @@ class VideoInfo:
     fps: float
     width: int
     height: int
-    subtitle_langs: list[str] = field(default_factory=list)
+    vtt_paths: list[Path] = field(default_factory=list)
 
 
 _YDL_OPTS = {
@@ -26,17 +26,18 @@ _YDL_OPTS = {
 }
 
 
-def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[str]]:
-    """Download video and return (video_path, subtitle_langs) in one yt-dlp session.
+def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[Path]]:
+    """Download video (+ VTT captions if available) and return (video_path, vtt_paths).
     If a video file already exists in out_dir, skip the network call entirely."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
     url_record = out_dir / "video.url"
-    existing = [p for p in out_dir.glob("video.*") if p.suffix not in (".part", ".url")]
+    existing = [p for p in out_dir.glob("video.*") if p.suffix not in (".part", ".url", ".vtt")]
     if existing and url_record.exists() and url_record.read_text().strip() == url:
         video_path = max(existing, key=lambda p: p.stat().st_size)
         print(f"[ingest] Using cached video: {video_path}")
-        return video_path, []
+        vtt_paths = sorted(out_dir.glob("video.*.vtt"))
+        return video_path, vtt_paths
     elif existing:
         print("[ingest] URL changed — removing old video and re-downloading")
         for p in existing:
@@ -47,19 +48,20 @@ def _download_and_meta(url: str, out_dir: Path) -> tuple[Path, list[str]]:
         "outtmpl": str(out_dir / "video.%(ext)s"),
         "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
+        "writeautomaticsub": True,
+        "subtitleslangs": ["en", "en-US", "en-GB"],
+        "subtitlesformat": "vtt",
     }
     with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[arg-type]
-        info = ydl.extract_info(url, download=True) or {}
+        ydl.extract_info(url, download=True)
 
-    subs = {**info.get("subtitles", {}), **info.get("automatic_captions", {})}
-    subtitle_langs = list(subs.keys())
-
-    candidates = [p for p in out_dir.glob("video.*") if p.suffix not in (".part", ".url")]
+    candidates = [p for p in out_dir.glob("video.*") if p.suffix not in (".part", ".url", ".vtt")]
     if not candidates:
         raise FileNotFoundError(f"yt-dlp produced no output in {out_dir}")
     video_path = max(candidates, key=lambda p: p.stat().st_size)
     url_record.write_text(url)
-    return video_path, subtitle_langs
+    vtt_paths = sorted(out_dir.glob("video.*.vtt"))
+    return video_path, vtt_paths
 
 
 def _probe(video_path: Path) -> dict:
@@ -88,7 +90,7 @@ def _extract_audio(video_path: Path, out_dir: Path) -> Path | None:
 
 
 def ingest(url: str, out_dir: Path) -> VideoInfo:
-    video_path, subtitle_langs = _download_and_meta(url, out_dir)
+    video_path, vtt_paths = _download_and_meta(url, out_dir)
     probe = _probe(video_path)
 
     video_stream = next(s for s in probe["streams"] if s["codec_type"] == "video")
@@ -107,7 +109,7 @@ def ingest(url: str, out_dir: Path) -> VideoInfo:
         fps=fps,
         width=width,
         height=height,
-        subtitle_langs=subtitle_langs,
+        vtt_paths=vtt_paths,
     )
 
 
@@ -122,4 +124,4 @@ if __name__ == "__main__":
     print(f"video   : {info.video_path}")
     print(f"audio   : {info.audio_path}")
     print(f"duration: {info.duration:.1f}s  fps: {info.fps:.2f}  {info.width}x{info.height}")
-    print(f"subs    : {info.subtitle_langs or 'none'}")
+    print(f"vtt     : {[str(p) for p in info.vtt_paths] or 'none'}")

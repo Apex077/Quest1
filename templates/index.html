@@ -205,6 +205,22 @@ input.invalid { border-color: var(--error); }
 .field-hint  { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
 .field-error { font-size: 11.5px; color: var(--error); margin-top: 3px; display: none; }
 
+/* ── Select ── */
+select {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+}
+select:focus { border-color: var(--muted); }
+
 /* ── Checkbox options ── */
 .options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
 .opt-item { display: flex; flex-direction: column; gap: 1px; }
@@ -414,7 +430,25 @@ input.invalid { border-color: var(--error); }
 
       <hr>
 
+      <div class="field">
+        <label for="whisper-model">Whisper model</label>
+        <select id="whisper-model">
+          <option value="small" selected>small (default, more accurate)</option>
+          <option value="base">base (faster, less accurate)</option>
+          <option value="medium">medium (slower, most accurate)</option>
+          <option value="tiny">tiny (fastest, lowest accuracy)</option>
+        </select>
+        <div class="field-hint">Used only if no captions are found.</div>
+      </div>
+
       <div class="options">
+        <div class="opt-item">
+          <label class="opt-row">
+            <input type="checkbox" id="keep-video" checked>
+            Keep downloaded video
+          </label>
+          <div class="opt-hint">Uncheck to delete the video after extraction (saves disk space)</div>
+        </div>
         <div class="opt-item">
           <label class="opt-row">
             <input type="checkbox" id="retranscribe">
@@ -657,6 +691,8 @@ document.getElementById('main-form').addEventListener('submit', async e => {
   const phrase = document.getElementById('phrase').value.trim();
   const useOcr = document.getElementById('use-ocr').checked;
   const forceRetranscribe = document.getElementById('retranscribe').checked;
+  const keepVideo = document.getElementById('keep-video').checked;
+  const whisperModel = document.getElementById('whisper-model').value;
 
   if (!clientValidate(url, phrase)) return;
 
@@ -674,7 +710,7 @@ document.getElementById('main-form').addEventListener('submit', async e => {
     const res  = await fetch('/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, phrase, use_ocr: useOcr, force_retranscribe: forceRetranscribe }),
+      body: JSON.stringify({ url, phrase, use_ocr: useOcr, force_retranscribe: forceRetranscribe, keep_video: keepVideo, whisper_model: whisperModel }),
     });
     const body = await res.json();
     if (!res.ok) {

@@ -1,6 +1,6 @@
 """
 Prior generation: cheap hints for where to scan first.
-Subtitles (cheapest) → audio transcription → nothing (plain chronological scan).
+VTT captions (most precise) → embedded subtitles → audio transcription → nothing.
 Neither prior ever causes the visual scan to skip or stop early.
 """
 
@@ -14,9 +14,13 @@ from rapidfuzz import fuzz
 
 FUZZY_THRESHOLD = 65  # partial_ratio minimum to count as a candidate window
 
+# ── YouTube VTT word timestamp pattern ──────────────────────────────────────
+# Matches: <00:00:05.120><c> word</c>  (YouTube auto-caption cue bodies)
+_VTT_WORD_RE = re.compile(r"<(\d{2}:\d{2}:\d{2}\.\d{3})><c>\s*([^<\n]+?)\s*</c>")
+
 
 # ---------------------------------------------------------------------------
-# SRT parsing
+# SRT / VTT timestamp helpers
 # ---------------------------------------------------------------------------
 
 def _ts_to_sec(ts: str) -> float:
@@ -26,6 +30,10 @@ def _ts_to_sec(ts: str) -> float:
     s, ms = rest.split(".")
     return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
 
+
+# ---------------------------------------------------------------------------
+# SRT parsing
+# ---------------------------------------------------------------------------
 
 def _parse_srt(text: str) -> list[tuple[float, float, str]]:
     """Returns list of (start_sec, end_sec, caption_text)."""
@@ -47,7 +55,53 @@ def _parse_srt(text: str) -> list[tuple[float, float, str]]:
 
 
 # ---------------------------------------------------------------------------
-# Subtitle prior
+# VTT prior (YouTube auto-captions with per-word timestamps)
+# ---------------------------------------------------------------------------
+
+def _parse_vtt_words(text: str) -> list[dict]:
+    """Extract {start, word} pairs from YouTube VTT cue bodies, deduped."""
+    seen: set[tuple[str, str]] = set()
+    words = []
+    for m in _VTT_WORD_RE.finditer(text):
+        key = (m.group(1), m.group(2))
+        if key not in seen:
+            seen.add(key)
+            words.append({"start": _ts_to_sec(m.group(1)), "word": m.group(2)})
+    return words
+
+
+def _word_window_match(words: list[dict], target: str) -> list[tuple[float, float]]:
+    """Sliding-window phrase match over a word list. Returns tight (start, end) pairs."""
+    target_words = target.lower().split()
+    w = len(target_words)
+    if w == 0 or len(words) < w:
+        return []
+    windows = []
+    for i in range(len(words) - w + 1):
+        chunk = words[i:i + w]
+        chunk_text = " ".join(c["word"].lower() for c in chunk)
+        if fuzz.partial_ratio(target.lower(), chunk_text) >= FUZZY_THRESHOLD:
+            start = max(0.0, chunk[0]["start"] - 0.3)
+            end = chunk[-1]["start"] + 0.5
+            windows.append((start, end))
+    return sorted(set(windows))
+
+
+def vtt_prior(vtt_path: Path, target: str) -> list[tuple[float, float]]:
+    """
+    Parse a YouTube VTT caption file, fuzzy-match target phrase at word level,
+    return tight (start, end) windows sorted by start time.
+    Falls back to empty list if no word timestamps are present.
+    """
+    text = vtt_path.read_text(errors="replace")
+    words = _parse_vtt_words(text)
+    if not words:
+        return []
+    return _word_window_match(words, target)
+
+
+# ---------------------------------------------------------------------------
+# Subtitle prior (embedded streams in the container)
 # ---------------------------------------------------------------------------
 
 def subtitle_prior(video_path: Path, target: str) -> list[tuple[float, float]]:
@@ -89,50 +143,74 @@ def subtitle_prior(video_path: Path, target: str) -> list[tuple[float, float]]:
 
 
 # ---------------------------------------------------------------------------
-# Audio prior
+# Audio prior (faster-whisper with word-level timestamps)
 # ---------------------------------------------------------------------------
 
-def _transcript_cache(audio_path: Path) -> Path:
-    return audio_path.with_suffix(".transcript.json")
+def _transcript_cache(audio_path: Path, model_name: str = "small") -> Path:
+    return audio_path.with_suffix(f".transcript.{model_name}.json")
 
 
-def _load_transcript(audio_path: Path) -> list[dict] | None:
-    cache = _transcript_cache(audio_path)
+def _load_transcript(audio_path: Path, model_name: str) -> list[dict] | None:
+    cache = _transcript_cache(audio_path, model_name)
     if cache.exists():
         return json.loads(cache.read_text())
     return None
 
 
-def _save_transcript(audio_path: Path, segments: list[dict]) -> None:
-    _transcript_cache(audio_path).write_text(json.dumps(segments))
+def _save_transcript(audio_path: Path, segments: list[dict], model_name: str) -> None:
+    _transcript_cache(audio_path, model_name).write_text(json.dumps(segments))
 
 
-def audio_prior(audio_path: Path, target: str, force_retranscribe: bool = False) -> list[tuple[float, float]]:
-    """
-    Transcribe audio with faster-whisper (base model, CPU, int8),
-    return segment windows whose text fuzzy-matches the target.
-    Transcript is cached as audio.transcript.json — subsequent calls skip transcription.
-    """
-    if force_retranscribe:
-        _transcript_cache(audio_path).unlink(missing_ok=True)
-        print("[prior] Cleared cached transcript — re-transcribing")
-
-    cached = _load_transcript(audio_path)
-    if cached is not None:
-        print("[prior] Using cached transcript")
-        segs = cached
-    else:
-        from faster_whisper import WhisperModel  # lazy import — heavy load
-        # ponytail: base model + int8 for speed; swap to "small"/"medium" if accuracy matters
-        model = WhisperModel("base", device="cpu", compute_type="int8")
-        raw, _ = model.transcribe(str(audio_path), word_timestamps=False)
-        segs = [{"start": s.start, "end": s.end, "text": s.text} for s in raw]
-        _save_transcript(audio_path, segs)
-        print(f"[prior] Transcript cached ({len(segs)} segments)")
-
-    windows: list[tuple[float, float]] = []
+def _match_windows(segs: list[dict], target: str) -> list[tuple[float, float]]:
+    """Match target against segments; use word-level windows when available."""
+    all_words = [w for s in segs for w in s.get("words", [])]
+    if all_words:
+        return _word_window_match(all_words, target)
+    # Fallback: segment-level (old cache without word data)
+    windows = []
     for seg in segs:
         if fuzz.partial_ratio(target.lower(), seg["text"].lower()) >= FUZZY_THRESHOLD:
             windows.append((seg["start"], seg["end"]))
-
     return sorted(windows)
+
+
+def audio_prior(
+    audio_path: Path,
+    target: str,
+    model_name: str = "small",
+    force_retranscribe: bool = False,
+) -> list[tuple[float, float]]:
+    """
+    Transcribe audio with faster-whisper (word-level timestamps),
+    return tight phrase windows that fuzzy-match the target.
+    Transcript is cached as audio.transcript.<model_name>.json.
+    """
+    if force_retranscribe:
+        _transcript_cache(audio_path, model_name).unlink(missing_ok=True)
+        print(f"[prior] Cleared cached transcript ({model_name}) — re-transcribing")
+
+    cached = _load_transcript(audio_path, model_name)
+    if cached is not None:
+        print(f"[prior] Using cached transcript ({model_name})")
+        segs = cached
+    else:
+        from faster_whisper import WhisperModel  # lazy import — heavy load
+        print(f"[prior] Transcribing with whisper '{model_name}'...")
+        model = WhisperModel(model_name, device="cpu", compute_type="int8")
+        raw, _ = model.transcribe(str(audio_path), word_timestamps=True)
+        segs = [
+            {
+                "start": s.start,
+                "end": s.end,
+                "text": s.text,
+                "words": [
+                    {"word": w.word, "start": w.start, "end": w.end}
+                    for w in (s.words or [])
+                ],
+            }
+            for s in raw
+        ]
+        _save_transcript(audio_path, segs, model_name)
+        print(f"[prior] Transcript cached ({len(segs)} segments, model={model_name})")
+
+    return _match_windows(segs, target)

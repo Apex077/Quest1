@@ -56,7 +56,13 @@ def _validate_url(raw: str) -> tuple[str | None, str | None]:
 # Background task runner
 # ---------------------------------------------------------------------------
 
-def _run_pipeline(task_id: str, url: str, phrase: str, use_ocr: bool, force_retranscribe: bool) -> None:
+_VALID_WHISPER_MODELS = {"tiny", "base", "small", "medium"}
+
+
+def _run_pipeline(
+    task_id: str, url: str, phrase: str,
+    use_ocr: bool, force_retranscribe: bool, whisper_model: str, keep_video: bool,
+) -> None:
     q: queue.Queue = _tasks[task_id]["queue"]
     cmd = [
         str(BASE_DIR / "venv" / "bin" / "python3"),
@@ -67,6 +73,9 @@ def _run_pipeline(task_id: str, url: str, phrase: str, use_ocr: bool, force_retr
         cmd.append("--use-ocr")
     if force_retranscribe:
         cmd.append("--retranscribe")
+    if not keep_video:
+        cmd.append("--no-keep")
+    cmd += ["--whisper-model", whisper_model]
 
     result: dict = {"status": "NOT_FOUND", "timestamp": None, "frame_number": None, "frame": None}
 
@@ -136,11 +145,17 @@ def run():
 
     use_ocr = bool(data.get("use_ocr", False))
     force_retranscribe = bool(data.get("force_retranscribe", False))
+    keep_video = bool(data.get("keep_video", True))
+    whisper_model = str(data.get("whisper_model", "small"))
+    if whisper_model not in _VALID_WHISPER_MODELS:
+        whisper_model = "small"
 
     task_id = str(uuid.uuid4())
     _tasks[task_id] = {"queue": queue.Queue(), "result": None, "done": False}
     threading.Thread(
-        target=_run_pipeline, args=(task_id, url, phrase, use_ocr, force_retranscribe), daemon=True
+        target=_run_pipeline,
+        args=(task_id, url, phrase, use_ocr, force_retranscribe, whisper_model, keep_video),
+        daemon=True,
     ).start()
     return jsonify({"task_id": task_id})
 
