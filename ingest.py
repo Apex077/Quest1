@@ -24,6 +24,9 @@ class VideoInfo:
 _YDL_OPTS = {
     "nocheckcertificate": True,
     "impersonate": ImpersonateTarget(client="chrome"),
+    # tv client skips YouTube's proof-of-origin JS challenge (set-top boxes can't run JS).
+    # Falls back to web if tv doesn't have the requested format.
+    "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
 }
 
 # Prefer H.264 progressive MP4 (direct HTTPS download).

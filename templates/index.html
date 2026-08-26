@@ -473,13 +473,6 @@ select:focus { border-color: var(--muted); }
           </label>
           <div class="opt-hint">Clears cached audio transcript and re-runs Whisper</div>
         </div>
-        <div class="opt-item">
-          <label class="opt-row">
-            <input type="checkbox" id="use-ocr">
-            OCR mode (beta)
-          </label>
-          <div class="opt-hint">Visual text scan — slow, struggles with stylised fonts</div>
-        </div>
       </div>
 
       <hr>
@@ -735,7 +728,6 @@ document.getElementById('main-form').addEventListener('submit', async e => {
 
   const url    = sanitiseUrl(document.getElementById('url').value);
   const phrase = document.getElementById('phrase').value.trim();
-  const useOcr = document.getElementById('use-ocr').checked;
   const forceRetranscribe = document.getElementById('retranscribe').checked;
   const keepVideo = document.getElementById('keep-video').checked;
   const whisperModel = document.getElementById('whisper-model').value;
@@ -755,7 +747,7 @@ document.getElementById('main-form').addEventListener('submit', async e => {
     const res  = await fetch('/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, phrase, use_ocr: useOcr, force_retranscribe: forceRetranscribe, keep_video: keepVideo, whisper_model: whisperModel }),
+      body: JSON.stringify({ url, phrase, force_retranscribe: forceRetranscribe, keep_video: keepVideo, whisper_model: whisperModel }),
     });
     const body = await res.json();
     if (!res.ok) {
